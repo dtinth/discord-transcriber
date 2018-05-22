@@ -11,6 +11,8 @@ can figure out who said what.
 Transcription [costs $0.006](https://cloud.google.com/speech-to-text/pricing)
 for each message shorter than 15 seconds.
 
+![Screenshot](screenshot.png)
+
 ## Configuration
 
 Create these files:
