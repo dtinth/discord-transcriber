@@ -13,6 +13,9 @@ for each message shorter than 15 seconds.
 
 ![Screenshot](screenshot.png)
 
+**Known issue:** This bot somehow stops working after a while. I haven’t figured
+out how to fix it yet. If you’ve figured it out, please send a PR. Thanks!!
+
 ## Configuration
 
 Create these files:
