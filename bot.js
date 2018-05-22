@@ -56,6 +56,18 @@ async function join(voiceChannel, textChannel) {
   const receiver = voiceConnection.createReceiver()
   pino.info('Voice channel joined.')
 
+  let lastReportedUsage = 0
+  setInterval(() => {
+    if (totalBilledThisSession === lastReportedUsage) {
+      return
+    }
+    lastReportedUsage = totalBilledThisSession
+    const money = (lastReportedUsage / 15 * 0.006).toFixed(3)
+    textChannel.send(
+      `Google Cloud Speech API usage: ${lastReportedUsage} seconds (\$${money})`
+    )
+  }, 60000)
+
   const recognizers = new Map()
 
   /**
@@ -147,7 +159,7 @@ async function join(voiceChannel, textChannel) {
           config: {
             encoding: 'LINEAR16',
             sampleRateHertz: 16000,
-            languageCode: 'th',
+            languageCode: config.languageCode,
             maxAlternatives: 1,
             profanityFilter: false,
             metadata: {
@@ -173,9 +185,8 @@ async function join(voiceChannel, textChannel) {
 
     recognizers.set(user, recognizer)
     pino.trace(
-      {
-        activeRecognizers: recognizers.size
-      }`Starting voice recognition for ${user} (oid=${obfuscatedId})...`
+      { activeRecognizers: recognizers.size },
+      `Starting voice recognition for ${user} (oid=${obfuscatedId})...`
     )
 
     return recognizer
