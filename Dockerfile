@@ -12,4 +12,4 @@ COPY package.json /usr/src/app/
 COPY yarn.lock /usr/src/app/
 RUN yarn && yarn cache clean
 COPY . /usr/src/app
-CMD node bot
+CMD yarn start
