@@ -10,13 +10,20 @@ const speech = require('@google-cloud/speech').v1p1beta1
 const speechClient = new speech.SpeechClient({
   keyFilename: 'google-cloud.credentials.json'
 })
+
+// This is our logger.
 const pino = require('pino')({
   prettyPrint: true,
   level: 'trace'
 })
+
+// Crash when something unexpected happens.
+// Let a process manager (e.g. pm2 or Docker) restart it.
 process.on('unhandledRejection', up => {
   throw up
 })
+
+// Keep track of billed usage.
 let totalBilledThisSession = 0
 
 const client = new Discord.Client()
@@ -31,6 +38,7 @@ client.on('ready', () => {
   if (!guild) {
     throw new Error('Cannot find guild.')
   }
+
   /** @type {Discord.VoiceChannel} */
   // @ts-ignore
   const voiceChannel = guild.channels.find(ch => {
@@ -55,6 +63,7 @@ client.on('ready', () => {
 })
 
 /**
+ * Join the voice channel and start listening.
  * @param {Discord.VoiceChannel} voiceChannel
  * @param {Discord.TextChannel} textChannel
  */
@@ -64,6 +73,7 @@ async function join(voiceChannel, textChannel) {
   const receiver = voiceConnection.createReceiver()
   pino.info('Voice channel joined.')
 
+  // Every 60 seconds, report API usage and money spent.
   let lastReportedUsage = 0
   setInterval(() => {
     if (totalBilledThisSession === lastReportedUsage) {
@@ -77,11 +87,14 @@ async function join(voiceChannel, textChannel) {
   }, 60000)
 
   /**
+   * Map of active recognizers.
    * @type {Map<Discord.User, ReturnType<typeof createRecognizer>>}
    */
   const recognizers = new Map()
 
   /**
+   * Returns a recognizer for a specified user, creating a new one if
+   * necessary.
    * @param {Discord.User} user
    * @returns {ReturnType<typeof createRecognizer>}
    */
@@ -96,36 +109,37 @@ async function join(voiceChannel, textChannel) {
   }
 
   /**
+   * Creates a new Recognizer for the user.
+   * The recognizer will self-destruct when user stopped speaking for 500ms.
    * @param {Discord.User} user
    */
   function createRecognizer(user) {
     const hash = require('crypto').createHash('sha256')
     hash.update(`${user}`)
     const obfuscatedId = parseInt(hash.digest('hex').substr(0, 12), 16)
-    const request = {
-      config: {
-        encoding: 'LINEAR16',
-        sampleRateHertz: 16000,
-        languageCode: 'th',
-        maxAlternatives: 1,
-        profanityFilter: false,
-        metadata: {
-          interactionType: 'PHONE_CALL',
-          obfuscatedId
-        },
-        model: 'default'
-      },
-      singleUtterance: false
-    }
 
+    /**
+     * Raw PCM data from discord.js will be written to this file.
+     */
     const tmpFile = '.tmp/input' + Date.now() + '.s32'
+
+    /**
+     * Write stream for raw PCM data from discord.js.
+     */
     const writeStream = fs.createWriteStream(tmpFile)
+
+    /**
+     * This promise will be resolved when writeStream is closed.
+     */
     const written = new Promise((resolve, reject) => {
       writeStream.on('error', reject)
       writeStream.on('close', resolve)
     })
 
-    /** @type {NodeJS.Timer} */
+    /**
+     * Timer from handling of a buffer to ending the stream.
+     * @type {NodeJS.Timer}
+     */
     let timeout
     const recognizer = {
       /**
@@ -139,6 +153,9 @@ async function join(voiceChannel, textChannel) {
     }
 
     let ended = false
+    /**
+     * Ends the stream and self-destruct the recognizer.
+     */
     function endStream() {
       if (ended) return
       ended = true
@@ -150,6 +167,9 @@ async function join(voiceChannel, textChannel) {
       transcribe()
     }
 
+    /**
+     * Transcribe the heard audio into text, and post it.
+     */
     async function transcribe() {
       try {
         const audio = await saveAndConvertAudio()
@@ -191,7 +211,8 @@ async function join(voiceChannel, textChannel) {
     }
 
     /**
-     * @param {Buffer} buffer
+     * Finish writing to tmpFile and convert it to format suitable
+     * for Google Cloud Speech-To-Text API.
      */
     async function saveAndConvertAudio() {
       writeStream.end()
@@ -230,11 +251,4 @@ async function join(voiceChannel, textChannel) {
   receiver.on('pcm', (user, buffer) => {
     getRecognizer(user).handleBuffer(buffer)
   })
-
-  // voiceConnection.on('speaking', (user, speaking) => {
-  //   if (speaking) {
-  //     const audioStream = receiver.createPCMStream(user)
-  //     getRecognizer(user).listen(audioStream)
-  //   }
-  // })
 }
