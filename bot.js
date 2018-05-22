@@ -1,7 +1,11 @@
+// @ts-check
 const Discord = require('discord.js')
 const fs = require('fs')
-const sox = require('sox-stream')
-const config = require('./discord.config.json')
+const execFile = require('child_process').execFile
+const config = JSON.parse(
+  fs.readFileSync(require.resolve('./discord.config.json'), 'utf8')
+)
+// @ts-ignore
 const speech = require('@google-cloud/speech').v1p1beta1
 const speechClient = new speech.SpeechClient({
   keyFilename: 'google-cloud.credentials.json'
@@ -27,6 +31,8 @@ client.on('ready', () => {
   if (!guild) {
     throw new Error('Cannot find guild.')
   }
+  /** @type {Discord.VoiceChannel} */
+  // @ts-ignore
   const voiceChannel = guild.channels.find(ch => {
     return ch.name === config.voiceChannelName && ch.type === 'voice'
   })
@@ -35,6 +41,8 @@ client.on('ready', () => {
   }
   pino.info('Voice channel: %s (%s)', voiceChannel.id, voiceChannel.name)
 
+  /** @type {Discord.TextChannel} */
+  // @ts-ignore
   const textChannel = guild.channels.find(ch => {
     return ch.name === config.textChannelName && ch.type === 'text'
   })
@@ -68,15 +76,29 @@ async function join(voiceChannel, textChannel) {
     )
   }, 60000)
 
+  /**
+   * @type {Map<Discord.User, ReturnType<typeof createRecognizer>>}
+   */
   const recognizers = new Map()
 
   /**
    * @param {Discord.User} user
+   * @returns {ReturnType<typeof createRecognizer>}
    */
   function getRecognizer(user) {
     if (recognizers.has(user)) {
+      // @ts-ignore
       return recognizers.get(user)
     }
+    const recognizer = createRecognizer(user)
+    recognizers.set(user, recognizer)
+    return recognizer
+  }
+
+  /**
+   * @param {Discord.User} user
+   */
+  function createRecognizer(user) {
     const hash = require('crypto').createHash('sha256')
     hash.update(`${user}`)
     const obfuscatedId = parseInt(hash.digest('hex').substr(0, 12), 16)
@@ -96,56 +118,41 @@ async function join(voiceChannel, textChannel) {
       singleUtterance: false
     }
 
-    const buffers = []
+    const tmpFile = '.tmp/input' + Date.now() + '.s32'
+    const writeStream = fs.createWriteStream(tmpFile)
+    const written = new Promise((resolve, reject) => {
+      writeStream.on('error', reject)
+      writeStream.on('close', resolve)
+    })
+
+    /** @type {NodeJS.Timer} */
     let timeout
     const recognizer = {
-      listen(audioStream) {
+      /**
+       * @param {Buffer} buffer
+       */
+      handleBuffer(buffer) {
         clearTimeout(timeout)
-        pino.trace(`Listening to ${user}...`)
-        audioStream
-          .pipe(
-            sox({
-              global: {
-                temp: '.tmp'
-              },
-              input: {
-                r: 48000,
-                t: 's32',
-                c: 1
-              },
-              output: {
-                r: 16000,
-                t: 's16',
-                c: 1
-              }
-            })
-          )
-          .on('error', e => {
-            console.error(e)
-            endStream()
-          })
-          .on('data', buffer => {
-            buffers.push(buffer)
-          })
-          .on('end', () => {
-            clearTimeout(timeout)
-            pino.trace(`Utterance finished for ${user}.`)
-            timeout = setTimeout(endStream, 1000)
-          })
+        writeStream.write(buffer)
+        timeout = setTimeout(endStream, 1000)
       }
     }
 
     let ended = false
-    async function endStream() {
+    function endStream() {
       if (ended) return
       ended = true
       recognizers.delete(user)
       pino.trace(
         { activeRecognizers: recognizers.size },
-        `Ending stream for ${user}.`
+        `Ended stream for ${user}.`
       )
+      transcribe()
+    }
+
+    async function transcribe() {
       try {
-        const audio = Buffer.concat(buffers)
+        const audio = await saveAndConvertAudio()
         const audioLength = audio.length / 2 / 16000
         const billedLength = Math.ceil(audioLength / 15) * 15
         totalBilledThisSession += billedLength
@@ -183,19 +190,51 @@ async function join(voiceChannel, textChannel) {
       }
     }
 
-    recognizers.set(user, recognizer)
+    /**
+     * @param {Buffer} buffer
+     */
+    async function saveAndConvertAudio() {
+      writeStream.end()
+      await written
+      return new Promise((resolve, reject) => {
+        execFile(
+          'sox',
+          [
+            ...['-t', 's32', '-r', '48000', '-c', '1', tmpFile],
+            ...['-t', 's16', '-r', '16000', '-c', '1', '-']
+          ],
+          {
+            maxBuffer: 20 * 1048576,
+            encoding: 'buffer'
+          },
+          (error, stdout) => {
+            if (error) return reject(error)
+            resolve(stdout)
+            fs.unlink(tmpFile, err => {
+              if (err) {
+                pino.error(err, 'Cannot cleanup temp file.')
+              }
+            })
+          }
+        )
+      })
+    }
+
     pino.trace(
       { activeRecognizers: recognizers.size },
       `Starting voice recognition for ${user} (oid=${obfuscatedId})...`
     )
-
     return recognizer
   }
 
-  voiceConnection.on('speaking', (user, speaking) => {
-    if (speaking) {
-      const audioStream = receiver.createPCMStream(user)
-      getRecognizer(user).listen(audioStream)
-    }
+  receiver.on('pcm', (user, buffer) => {
+    getRecognizer(user).handleBuffer(buffer)
   })
+
+  // voiceConnection.on('speaking', (user, speaking) => {
+  //   if (speaking) {
+  //     const audioStream = receiver.createPCMStream(user)
+  //     getRecognizer(user).listen(audioStream)
+  //   }
+  // })
 }

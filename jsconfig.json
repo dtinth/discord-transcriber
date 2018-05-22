@@ -1,0 +1,7 @@
+{
+  "include": ["bot.js"],
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["es2015"]
+  }
+}
