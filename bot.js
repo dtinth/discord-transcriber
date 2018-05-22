@@ -134,7 +134,7 @@ async function join(voiceChannel, textChannel) {
       handleBuffer(buffer) {
         clearTimeout(timeout)
         writeStream.write(buffer)
-        timeout = setTimeout(endStream, 1000)
+        timeout = setTimeout(endStream, 500)
       }
     }
 
