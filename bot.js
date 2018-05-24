@@ -199,7 +199,9 @@ async function join(voiceChannel, textChannel) {
               interactionType: 'PHONE_CALL',
               obfuscatedId
             },
-            model: 'default'
+            model: 'default',
+            useEnhanced: true,
+            enableAutomaticPunctuation: true
           }
         })
         if (data.results) {
