@@ -141,6 +141,7 @@ async function join(voiceChannel, textChannel) {
      * @type {NodeJS.Timer}
      */
     let timeout
+    const start = Date.now()
     const recognizer = {
       /**
        * @param {Buffer} buffer
@@ -148,7 +149,7 @@ async function join(voiceChannel, textChannel) {
       handleBuffer(buffer) {
         clearTimeout(timeout)
         writeStream.write(buffer)
-        timeout = setTimeout(endStream, 500)
+        timeout = setTimeout(endStream, Date.now() - start > 10000 ? 500 : 2000)
       }
     }
 
@@ -174,9 +175,14 @@ async function join(voiceChannel, textChannel) {
       try {
         const audio = await saveAndConvertAudio()
         const audioLength = audio.length / 2 / 16000
+        const duration = audioLength.toFixed(2)
+        if (audioLength < 1) {
+          pino.info(
+            `${user} (oid=${obfuscatedId}) spake for ${duration} seconds`
+          )
+        }
         const billedLength = Math.ceil(audioLength / 15) * 15
         totalBilledThisSession += billedLength
-        const duration = audioLength.toFixed(2)
         pino.info(
           { billedLength, totalBilledThisSession },
           `${user} (oid=${obfuscatedId}) spake for ${duration} seconds`
