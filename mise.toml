@@ -1,3 +1,4 @@
 [tools]
+deno = "2.9"
 node = "24"
 pitchfork = "latest"
