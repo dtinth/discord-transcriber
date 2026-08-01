@@ -1,252 +1,99 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import type { Message, TextBasedChannel } from "discord.js";
+import type { TextBasedChannel } from "discord.js";
 import { Buffer } from "node:buffer";
-import config from "./config.ts";
+import { writeWav } from "vxasr/audio";
+import type { AsrSetup } from "./asr-setup.ts";
 import logger from "./logger.ts";
-
-// Initialize Gemini API
-const genAI = new GoogleGenerativeAI(config.GEMINI_API_KEY);
+import { Recording } from "./recording.ts";
+import { ThrottledMessageUpdater } from "./throttled-message-updater.ts";
+import { runTranscriptionJob } from "./transcription-job.ts";
 
 /**
- * Class to handle a single speech utterance
- * - Creates and manages Discord message
- * - Collects audio chunks
- * - Processes transcription on finalize
+ * One speech segment: a growing {@link Recording}, a Discord message, and a
+ * transcription job running against them.
+ *
+ * The job starts the moment the utterance is created — while the person is
+ * still speaking — so a streaming provider can put partial text on screen
+ * during the speech, and a batch-style provider has its socket warm by the
+ * time the segment ends.
  */
 export class Utterance {
-  private chunks: Buffer[] = [];
-  private discordMessage: Message | null = null;
-  private startTime = Date.now();
-  private isFinalized = false;
+  private recording = new Recording();
+  private updater: ThrottledMessageUpdater;
+  private abort = new AbortController();
+  private finalized = false;
 
-  constructor(private userId: string, private textChannel: TextBasedChannel) {
-    this.createPlaceholderMessage();
+  constructor(
+    userId: string,
+    textChannel: TextBasedChannel,
+    asr: AsrSetup
+  ) {
+    this.updater = new ThrottledMessageUpdater(userId, textChannel);
+    void this.runJob(userId, asr);
   }
 
-  /**
-   * Create the initial Discord message
-   */
-  private async createPlaceholderMessage() {
-    if ("send" in this.textChannel) {
-      try {
-        this.discordMessage = await this.textChannel.send(
-          `<@${this.userId}>: *Listening...*`
-        );
-        logger.info(`Created placeholder message for user ${this.userId}`);
-      } catch (error) {
-        logger.error("Error creating placeholder message:", error);
-      }
-    }
+  /** Add 16 kHz 16-bit mono PCM. Ignored after finalize. */
+  addAudioData(pcm: Buffer): void {
+    if (this.finalized) return;
+    this.recording.append(pcm);
   }
 
-  /**
-   * Add audio data to this utterance
-   */
-  public addAudioData(data: Buffer) {
-    if (!this.isFinalized) {
-      this.chunks.push(data);
-    }
-  }
+  /** The speech segment ended; no more audio will arrive. Idempotent. */
+  finalize(): void {
+    if (this.finalized) return;
+    this.finalized = true;
+    this.recording.end();
 
-  /**
-   * Finalize the utterance and perform transcription
-   */
-  public async finalize() {
-    if (this.isFinalized) return;
-    this.isFinalized = true;
-
-    // Update message to show it's processing
-    if (this.discordMessage) {
-      try {
-        await this.discordMessage.edit(`<@${this.userId}>: *Transcribing...*`);
-      } catch (error) {
-        logger.error("Error updating message to transcribing status:", error);
-      }
-    }
-
-    if (this.chunks.length === 0) {
-      // No audio data collected
-      this.updateMessageNoSpeech();
+    if (this.recording.size === 0) {
+      // Nothing was ever recorded (e.g. torn down right after speech start).
+      // Don't ask a vendor to transcribe zero bytes — just clean up.
+      this.abort.abort();
+      void this.updater.noSpeech();
       return;
     }
 
-    // Process audio data
+    this.updater.setStatus("Transcribing...");
+  }
+
+  private async runJob(userId: string, asr: AsrSetup): Promise<void> {
     try {
-      // Combine all chunks
-      const pcmBuffer = Buffer.concat(this.chunks);
-
-      // Convert to mono 16kHz for processing
-      const monoBuffer = this.convertToMono16k(pcmBuffer);
-
-      // Add WAV header
-      const wavBuffer = this.addWavHeader(monoBuffer, 16000, 1);
-
-      // Convert to base64
-      const base64Audio = wavBuffer.toString("base64");
-
-      // Get Gemini model and transcribe
-      const model = genAI.getGenerativeModel({
-        model: "gemini-1.5-flash",
+      const result = await runTranscriptionJob({
+        recording: this.recording,
+        configurations: asr.configurations,
+        env: asr.env,
+        signal: this.abort.signal,
+        onPartial: (text) => {
+          if (text.trim()) this.updater.setPartial(text.trim());
+        },
+        onAttemptStart: (attempt, configurationId) => {
+          logger.info(
+            `Utterance for ${userId}: attempt ${attempt} via ${configurationId}`
+          );
+          if (attempt > 1) this.updater.setStatus(`Retrying (attempt ${attempt})...`);
+        },
       });
 
-      // Transcribe audio
-      const result = await model.generateContent([
-        {
-          inlineData: {
-            mimeType: "audio/wav",
-            data: base64Audio,
-          },
-        },
-        {
-          text: 'Please transcribe any speech in this audio. If there is no clear speech, respond with "No speech detected".',
-        },
-      ]);
+      const text = result.text.trim();
+      if (text) {
+        await this.updater.finalize(text);
+      } else {
+        await this.updater.noSpeech();
+      }
 
-      const transcription = result.response.text();
-
-      // Update the Discord message with the transcription
-      await this.updateMessageWithTranscription(transcription);
+      const cost = result.usage.reduce(
+        (sum, record) => sum + record.unitPrice * record.quantity,
+        0
+      );
+      logger.info(
+        `Transcribed ${(this.recording.size / 32000).toFixed(1)}s for ${userId} ` +
+          `via ${result.configurationId} (attempt ${result.attempt}, $${cost.toFixed(6)})`
+      );
     } catch (error) {
-      logger.error("Error transcribing audio:", error);
-      this.updateMessageError();
+      if (this.abort.signal.aborted) return;
+      logger.error(`Transcription failed for ${userId}:`, error);
+      // Attach the audio so the sound is not lost with the transcript.
+      const wav =
+        this.recording.size > 0 ? writeWav(this.recording.toBuffer()) : undefined;
+      await this.updater.fail(wav);
     }
-  }
-
-  /**
-   * Update message when no speech is detected - delete the message
-   */
-  private async updateMessageNoSpeech() {
-    if (this.discordMessage) {
-      try {
-        // Delete the message instead of showing "No speech detected"
-        await this.discordMessage.delete();
-        logger.debug(
-          `Deleted message for user ${this.userId} (no speech detected)`
-        );
-      } catch (error) {
-        logger.error("Error deleting no-speech message:", error);
-      }
-    }
-  }
-
-  /**
-   * Update message on error
-   */
-  private async updateMessageError() {
-    if (this.discordMessage) {
-      try {
-        await this.discordMessage.edit(
-          `<@${this.userId}>: *Error transcribing audio*`
-        );
-      } catch (error) {
-        logger.error("Error updating error message:", error);
-      }
-    }
-  }
-
-  /**
-   * Update message with transcription
-   */
-  private async updateMessageWithTranscription(transcription: string) {
-    if (this.discordMessage) {
-      try {
-        if (
-          transcription &&
-          transcription.trim() !== "No speech detected" &&
-          transcription.trim() !== "No speech detected."
-        ) {
-          await this.discordMessage.edit(`<@${this.userId}>: ${transcription}`);
-        } else {
-          // Delete the message instead of showing "No speech detected"
-          await this.discordMessage.delete();
-          logger.debug(
-            `Deleted message for user ${this.userId} (empty transcription)`
-          );
-        }
-      } catch (error) {
-        logger.error("Error updating transcription message:", error);
-      }
-    }
-  }
-
-  /**
-   * Converts 48kHz stereo PCM to 16kHz mono PCM
-   */
-  private convertToMono16k(buffer: Buffer): Buffer {
-    // Parameters
-    const inputSampleRate = 48000;
-    const outputSampleRate = 16000;
-    const ratio = inputSampleRate / outputSampleRate;
-    const inputChannels = 2; // Stereo
-    const bytesPerSample = 2; // 16-bit
-
-    // Calculate output buffer size
-    const inputSamples = buffer.length / (bytesPerSample * inputChannels);
-    const outputSamples = Math.floor(inputSamples / ratio);
-    const outputBuffer = Buffer.alloc(outputSamples * bytesPerSample);
-
-    // Process each output sample
-    for (let i = 0; i < outputSamples; i++) {
-      // Find the corresponding input sample
-      const inputIndex = Math.floor(i * ratio) * inputChannels * bytesPerSample;
-
-      // Average the left and right channels for mono conversion
-      if (inputIndex + 3 < buffer.length) {
-        const leftSample = buffer.readInt16LE(inputIndex);
-        const rightSample = buffer.readInt16LE(inputIndex + 2);
-        const monoSample = Math.round((leftSample + rightSample) / 2);
-
-        // Write to output buffer
-        outputBuffer.writeInt16LE(monoSample, i * bytesPerSample);
-      }
-    }
-
-    return outputBuffer;
-  }
-
-  /**
-   * Adds a WAV header to PCM audio data
-   */
-  private addWavHeader(
-    pcmData: Buffer,
-    sampleRate: number,
-    numChannels: number
-  ): Buffer {
-    const byteRate = sampleRate * numChannels * 2; // 2 bytes per sample
-    const blockAlign = numChannels * 2;
-    const dataSize = pcmData.length;
-    const buffer = Buffer.alloc(44 + pcmData.length);
-
-    // RIFF identifier
-    buffer.write("RIFF", 0);
-    // File size
-    buffer.writeUInt32LE(36 + dataSize, 4);
-    // RIFF type
-    buffer.write("WAVE", 8);
-    // Format chunk identifier
-    buffer.write("fmt ", 12);
-    // Format chunk length
-    buffer.writeUInt32LE(16, 16);
-    // Sample format (PCM)
-    buffer.writeUInt16LE(1, 20);
-    // Channel count
-    buffer.writeUInt16LE(numChannels, 22);
-    // Sample rate
-    buffer.writeUInt32LE(sampleRate, 24);
-    // Byte rate (SampleRate * NumChannels * BitsPerSample/8)
-    buffer.writeUInt32LE(byteRate, 28);
-    // Block align (NumChannels * BitsPerSample/8)
-    buffer.writeUInt16LE(blockAlign, 32);
-    // Bits per sample
-    buffer.writeUInt16LE(16, 34);
-    // Data chunk identifier
-    buffer.write("data", 36);
-    // Data chunk length
-    buffer.writeUInt32LE(dataSize, 40);
-
-    // Copy audio data
-    pcmData.copy(buffer, 44);
-
-    return buffer;
   }
 }

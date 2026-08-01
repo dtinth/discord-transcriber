@@ -1,5 +1,6 @@
 import { joinVoiceChannel, VoiceConnectionStatus } from "@discordjs/voice";
 import { Client, Events, GatewayIntentBits } from "discord.js";
+import { loadAsrSetup, type AsrSetup } from "./asr-setup.ts";
 import config from "./config.ts";
 import { TranscriptionService } from "./transcription.ts";
 
@@ -9,8 +10,18 @@ if (!config.DISCORD_TOKEN) {
   process.exit(1);
 }
 
-if (!config.GEMINI_API_KEY) {
-  console.error("GEMINI_API_KEY environment variable is required");
+// Validate ASR configurations and credentials up front — failing here beats
+// failing on the first utterance.
+let asrSetup: AsrSetup;
+try {
+  asrSetup = loadAsrSetup(config.ASR_CONFIGURATIONS, process.env);
+  console.log(
+    `ASR configurations (retry order): ${asrSetup.configurations
+      .map((c) => c.id)
+      .join(", ")}`
+  );
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
   process.exit(1);
 }
 
@@ -44,7 +55,7 @@ client.on("error", (error) => {
 });
 
 // Initialize transcription service
-const transcriptionService = new TranscriptionService();
+const transcriptionService = new TranscriptionService(asrSetup);
 
 // Map to track active transcription sessions
 const activeTranscriptions = new Map();

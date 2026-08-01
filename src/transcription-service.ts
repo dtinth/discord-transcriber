@@ -1,6 +1,6 @@
 import { EndBehaviorType, VoiceConnection } from "@discordjs/voice";
 import type { TextBasedChannel } from "discord.js";
-import config from "./config.ts";
+import type { AsrSetup } from "./asr-setup.ts";
 import logger from "./logger.ts";
 import { UserAudioStream } from "./user-audio-stream.ts";
 
@@ -8,7 +8,7 @@ export class TranscriptionService {
   private activeStreams: Map<string, UserAudioStream> = new Map();
   private transcriptionChannels: Map<string, TextBasedChannel> = new Map();
 
-  constructor() {}
+  constructor(private asr: AsrSetup) {}
 
   createTranscriptionStream(
     connection: VoiceConnection,
@@ -52,6 +52,7 @@ export class TranscriptionService {
         streamKey,
         textChannel,
         audioStream,
+        this.asr,
         () => {
           // Cleanup function
           this.activeStreams.delete(streamKey);
