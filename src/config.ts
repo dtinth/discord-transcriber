@@ -2,8 +2,10 @@ export default {
   // Discord bot token
   DISCORD_TOKEN: process.env.DISCORD_TOKEN || "",
 
-  // Gemini API key
-  GEMINI_API_KEY: process.env.GEMINI_API_KEY || "",
+  // Comma-separated vxasr configuration ids, in retry order.
+  ASR_CONFIGURATIONS:
+    process.env.ASR_CONFIGURATIONS ||
+    "qwen-omni/qwen3.5-omni-flash-realtime-2026-03-15",
 
   // Discord command prefix
   PREFIX: "!",

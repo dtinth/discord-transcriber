@@ -1,21 +1,23 @@
 # Discord Voice Transcriber Bot
 
-A Discord bot that transcribes voice channel conversations using Google's Gemini AI API.
+A Discord bot that transcribes voice channel conversations using [vxasr](https://github.com/dtinth/vxbeamer/tree/main/packages/vxasr), a multi-provider streaming ASR client.
 
 ## Features
 
 - Joins voice channels and listens to conversations
-- Transcribes spoken content in real-time using Gemini AI
+- Streams audio to an ASR provider while the person is still speaking
+- Live partial transcripts, debounced and throttled, edited into the message in-place
+- Retries with exponential backoff, rotating through a configurable provider list — a failed session loses no audio
+- Attaches the audio as a WAV file if every attempt fails, so the sound is never lost
 - Uses Silero voice activity detection (VAD) to filter out noise and background sounds
-- Displays placeholder messages immediately when speech is detected
-- Updates transcriptions in-place with real-time editing
+- Deletes the message when no speech is detected, keeping the channel clean
 - Simple commands to start and stop transcription
 
 ## Prerequisites
 
-- Node.js v22.14.0 or later (with built-in TypeScript support)
+- Node.js v24 or later
 - Discord Bot Token
-- Google Gemini API Key
+- An API key for at least one vxasr provider (e.g. `DASHSCOPE_API_KEY` for Qwen)
 
 ## Setup
 
@@ -28,13 +30,17 @@ A Discord bot that transcribes voice channel conversations using Google's Gemini
    ```
    cp .env.example .env
    ```
-4. Add your Discord and Gemini API credentials to the `.env` file:
+4. Add your credentials to the `.env` file:
    ```
    DISCORD_TOKEN=your_discord_bot_token
-   GEMINI_API_KEY=your_gemini_api_key
+   DASHSCOPE_API_KEY=your_dashscope_api_key
    LOG_LEVEL=4  # Optional: 1=error, 2=warn, 3=log, 4=info, 5=debug
    ```
-5. Configure Privileged Intents in the Discord Developer Portal:
+5. (Optional) Choose model configurations. `ASR_CONFIGURATIONS` is a comma-separated list of [vxasr configuration ids](https://github.com/dtinth/vxbeamer/tree/main/packages/vxasr) in retry order:
+   ```
+   ASR_CONFIGURATIONS=qwen-omni/qwen3.5-omni-flash-realtime-2026-03-15,qwen/qwen3-asr-flash-realtime-2026-02-10
+   ```
+6. Configure Privileged Intents in the Discord Developer Portal:
    - Go to https://discord.com/developers/applications
    - Select your bot application
    - Go to the "Bot" section
@@ -55,28 +61,29 @@ In Discord, use the following commands:
 
 ## Development
 
-Run type checking:
 ```
-pnpm typecheck
+pnpm typecheck   # Type checking
+pnpm test        # Unit tests (node:test, no network, no credentials)
 ```
 
 ## How It Works
 
 1. The bot connects to a Discord voice channel
 2. It captures audio streams from users as they speak
-3. Voice activity detection (VAD) determines if actual speech is present
-4. When speech is detected, a placeholder message is immediately created
-5. Audio is processed and converted from 48kHz stereo to 16kHz mono PCM
-6. The processed audio is sent to Gemini API for transcription
-7. The placeholder message is updated in-place with the transcribed text
-8. If no speech is detected, the message is deleted to keep the channel clean
+3. Opus audio is decoded and downsampled once to 16 kHz mono PCM
+4. Voice activity detection (VAD) segments the stream into utterances
+5. Each utterance's audio accumulates in a `Recording` — the source of truth
+6. A paced feeder streams the recording into a vxasr session while the person speaks; a placeholder message appears immediately
+7. Partial transcripts are edited into the message live (0.5 s debounce, 1.5 s throttle)
+8. On session failure the job backs off (1/2/4/8 s) and retries — up to 5 attempts, rotating through `ASR_CONFIGURATIONS`; each retry replays the same recording from the start
+9. The message is updated in-place with the final transcript, deleted when no speech was detected, or — after total failure — marked failed with the audio attached as a WAV
 
 ### Technical Details
 
-- Uses the Silero VAD model to differentiate speech from noise
-- Implements a hysteresis pattern with different activation/deactivation thresholds
-- Process audio in small chunks (~120ms) for real-time detection
-- Leverages async iterators for modern stream processing
+- The recording buffer owns the audio; sessions only read it through a cursor, so no retry ever loses sound
+- Replay pacing is per provider: providers confirmed to accept a fast dump (see `FAST_DUMP_PROVIDERS`) get the backlog immediately, others get realtime pacing
+- Uses the Silero VAD model with a hysteresis pattern (separate activation/deactivation thresholds)
+- Opus decoding uses opusscript (WASM) — no native compilation
 - Uses consola for structured logging with configurable verbosity levels
 
 ## License
