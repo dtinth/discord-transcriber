@@ -1,4 +1,4 @@
-import { AttachmentBuilder } from "discord.js";
+import { AttachmentBuilder, MessageFlags } from "discord.js";
 import type { Message, TextBasedChannel } from "discord.js";
 import { Buffer } from "node:buffer";
 import logger from "./logger.ts";
@@ -40,10 +40,17 @@ export class ThrottledMessageUpdater {
   ) {
     this.chain =
       "send" in channel
-        ? channel.send(this.render("*Listening...*")).catch((error) => {
-            logger.error("Error creating placeholder message:", error);
-            return null;
-          })
+        ? channel
+            .send({
+              content: this.render("*Listening...*"),
+              // Silent: a transcript should not ping the whole text channel
+              // every time someone speaks.
+              flags: MessageFlags.SuppressNotifications,
+            })
+            .catch((error) => {
+              logger.error("Error creating placeholder message:", error);
+              return null;
+            })
         : Promise.resolve(null);
   }
 
