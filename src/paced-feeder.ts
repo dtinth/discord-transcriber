@@ -10,27 +10,14 @@ export const FRAME_BYTES = BYTES_PER_SECOND / 10;
 /** Realtime pacing for a provider not confirmed to accept a fast dump. */
 export const FRAME_INTERVAL_MS = 100;
 
-/**
- * Providers confirmed to accept a fast dump — audio sent back-to-back rather
- * than paced at realtime — without hanging or losing accuracy.
- *
- * Copied from vxbeamer's `apps/website/src/evalRun.ts` (`FAST_DUMP_PROVIDERS`),
- * which documents the discipline: a provider earns its entry by being tested
- * against `testdata/OBSERVATIONS.md`; an untested provider defaults to
- * realtime. The vxasr package does not export this set yet — when it does,
- * import it and delete this copy.
- */
-export const FAST_DUMP_PROVIDERS: ReadonlySet<string> = new Set([
-  "qwen",
-  "qwen-omni",
-  "byteplus",
-  "mock",
-]);
-
 export interface FeedRecordingOptions {
   recording: Recording;
   session: Pick<ASRSession, "sendAudio" | "finish">;
-  /** True when the provider is in {@link FAST_DUMP_PROVIDERS}. */
+  /**
+   * The configuration's `supportsFastDump` — vxasr metadata declaring the
+   * provider was tested to accept audio back-to-back without hanging or
+   * losing accuracy. An untested provider declares `false` and gets realtime.
+   */
   fastDump: boolean;
   /** Aborting stops the feeder without calling `finish()`. */
   signal: AbortSignal;

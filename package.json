@@ -27,7 +27,7 @@
     "discord.js": "^14.27.0",
     "opusscript": "^0.1.1",
     "prism-media": "^1.3.5",
-    "vxasr": "0.1.0-next.5"
+    "vxasr": "0.1.0-next.7"
   },
   "devDependencies": {
     "@tsconfig/node-lts": "^22.0.1",

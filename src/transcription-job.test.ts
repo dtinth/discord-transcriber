@@ -30,7 +30,7 @@ function scriptedProvider(log: string[], name: string, script: SessionScript): A
   };
 }
 
-/** Wrap a provider as a resolvable ConfigurationDefinition (providerId "mock" → fast dump). */
+/** Wrap a provider as a resolvable ConfigurationDefinition (fast-dump, like the mock provider). */
 function definition(id: string, provider: ASRProvider): ConfigurationDefinition {
   return {
     id,
@@ -38,6 +38,7 @@ function definition(id: string, provider: ASRProvider): ConfigurationDefinition 
     providerId: "mock",
     model: "mock",
     postProcessing: [],
+    supportsFastDump: true,
     isConfigured: () => true,
     missingConfig: () => [],
     resolve: () => ({ ok: true, provider, configurationId: id }),

@@ -9,8 +9,9 @@ import { Buffer } from "node:buffer";
  * this replaces — did not have. Carries up to two leftover samples across
  * calls, so chunk boundaries do not affect the output.
  *
- * (vxasr has a general `LinearResampler`, but the published 0.1.0-next.5 does
- * not export it yet; this stands in until it does.)
+ * (vxasr exports a general `LinearResampler`, but it interpolates without a
+ * low-pass — built for upsampling. For 3:1 downsampling, group averaging is
+ * the better fit, so this stays.)
  */
 export class Downsampler {
   private leftover: number[] = [];

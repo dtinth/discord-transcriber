@@ -6,7 +6,7 @@ import type {
   UsageRecord,
 } from "vxasr";
 import logger from "./logger.ts";
-import { FAST_DUMP_PROVIDERS, feedRecording } from "./paced-feeder.ts";
+import { feedRecording } from "./paced-feeder.ts";
 import type { Recording } from "./recording.ts";
 import { realTimers, sleep, type Timers } from "./timers.ts";
 
@@ -88,7 +88,7 @@ export async function runTranscriptionJob(
 
       const { text, usage } = await runAttempt({
         provider: resolution.provider,
-        fastDump: FAST_DUMP_PROVIDERS.has(definition.providerId),
+        fastDump: definition.supportsFastDump,
         recording,
         onPartial,
         finishTimeoutMs,
