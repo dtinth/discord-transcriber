@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { MessageFlags } from "discord.js";
 import { FakeTimers, drainMicrotasks } from "./fake-timers.ts";
 import {
   DEBOUNCE_MS,
@@ -21,8 +22,11 @@ function fakeChannel(timers: FakeTimers) {
       return Promise.resolve(message);
     },
   };
+  const sendFlags: unknown[] = [];
   const channel = {
-    send(content: string) {
+    send(payload: string | { content: string; flags?: unknown }) {
+      const content = typeof payload === "string" ? payload : payload.content;
+      if (typeof payload !== "string") sendFlags.push(payload.flags);
       edits.push({ at: timers.now(), content });
       return Promise.resolve(message);
     },
@@ -30,11 +34,21 @@ function fakeChannel(timers: FakeTimers) {
   return {
     channel: channel as any,
     edits,
+    sendFlags,
     get deleted() {
       return deleted;
     },
   };
 }
+
+test("the placeholder is sent silent (no channel-wide notification)", async () => {
+  const timers = new FakeTimers();
+  const fake = fakeChannel(timers);
+  new ThrottledMessageUpdater("u", fake.channel, timers);
+  await drainMicrotasks();
+
+  assert.deepEqual(fake.sendFlags, [MessageFlags.SuppressNotifications]);
+});
 
 test("a rapid-fire burst collapses into one edit after the debounce", async () => {
   const timers = new FakeTimers();
