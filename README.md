@@ -81,7 +81,7 @@ pnpm test        # Unit tests (node:test, no network, no credentials)
 ### Technical Details
 
 - The recording buffer owns the audio; sessions only read it through a cursor, so no retry ever loses sound
-- Replay pacing is per provider: providers confirmed to accept a fast dump (see `FAST_DUMP_PROVIDERS`) get the backlog immediately, others get realtime pacing
+- Replay pacing is per provider: a provider whose vxasr metadata declares `supportsFastDump` gets the backlog immediately, others get realtime pacing
 - Uses the Silero VAD model with a hysteresis pattern (separate activation/deactivation thresholds)
 - Opus decoding uses opusscript (WASM) — no native compilation
 - Uses consola for structured logging with configurable verbosity levels

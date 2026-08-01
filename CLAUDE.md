@@ -17,7 +17,7 @@
 - `src/user-audio-stream.ts` - Decodes opus, downsamples once to 16 kHz mono, segments speech with Silero VAD
 - `src/utterance.ts` - One speech segment: recording + Discord message + transcription job
 - `src/recording.ts` - Append-only 16 kHz mono PCM buffer; the source of truth for every attempt
-- `src/paced-feeder.ts` - Cursor over the recording feeding a vxasr session; unifies live streaming and retry replay; `FAST_DUMP_PROVIDERS`
+- `src/paced-feeder.ts` - Cursor over the recording feeding a vxasr session; unifies live streaming and retry replay
 - `src/transcription-job.ts` - Attempt loop: 5 attempts, 1/2/4/8 s backoff, rotates through the configuration list, watchdog after `finish()`
 - `src/throttled-message-updater.ts` - Discord message lifecycle; partial edits with 0.5 s debounce + 1.5 s throttle
 - `src/downsample.ts` - Streaming 48 kHz stereo → 16 kHz mono (3:1 averaging)
@@ -47,7 +47,7 @@ Required environment variables in `.env` file:
   - Uses [vxasr](https://github.com/dtinth/vxbeamer/tree/main/packages/vxasr) (`0.1.0-next` line) for multi-provider streaming ASR
   - The `Recording` owns each utterance's audio; sessions read through a cursor, so a failed session loses nothing
   - The paced feeder starts streaming while the person is still speaking — a streaming provider (qwen) shows live partials during speech; qwen-omni streams its transcript after `finish()`
-  - Retry replays the whole recording: fast-dump for providers in `FAST_DUMP_PROVIDERS` (copied from vxbeamer's `evalRun.ts`; delete when vxasr exports it), realtime pacing otherwise
+  - Retry replays the whole recording: fast-dump when the configuration's `supportsFastDump` metadata says so, realtime pacing otherwise
   - Vendors cap concurrent sockets: `session.close()` runs in a `finally` on every path
   - After 5 failed attempts the message shows an error with the audio attached as WAV
   - Empty/whitespace transcript → the message is deleted (no speech)
