@@ -7,9 +7,9 @@
 #   pitchfork stop bot           # stop
 
 [daemons.bot]
-# `pnpm start` runs node with --env-file=.env, so the bot reads its own
-# credentials; nothing secret lives in this file.
-run = "pnpm start"
+# Deno reads .env itself via --env-file, so the bot owns its credentials;
+# nothing secret lives in this file.
+run = "deno run --allow-all --env-file=.env src/index.ts"
 # Resolve node/pnpm through this project's mise.toml.
 mise = true
 # The bot prints this once connected to Discord (src/index.ts).
