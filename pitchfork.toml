@@ -1,0 +1,18 @@
+# Daemon management for the transcriber bot — https://pitchfork.jdx.dev/
+#
+#   pitchfork start bot          # start (no-op if already running)
+#   pitchfork start bot --force  # restart (e.g. after pulling new code)
+#   pitchfork status bot         # is it up?
+#   pitchfork logs bot --tail    # follow the logs
+#   pitchfork stop bot           # stop
+
+[daemons.bot]
+# `pnpm start` runs node with --env-file=.env, so the bot reads its own
+# credentials; nothing secret lives in this file.
+run = "pnpm start"
+# Resolve node/pnpm through this project's mise.toml.
+mise = true
+# The bot prints this once connected to Discord (src/index.ts).
+ready_output = "Logged in as"
+# Restart on crash, but give up if it keeps dying (e.g. bad token).
+retry = 3
