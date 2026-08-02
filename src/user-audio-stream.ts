@@ -11,6 +11,9 @@ import { Utterance } from "./utterance.ts";
 /** Bytes per Silero VAD frame: 1024 samples of 16 kHz 16-bit mono (64 ms). */
 const VAD_FRAME_BYTES = 1024 * 2;
 
+/** How much audio one VAD frame represents. */
+const VAD_FRAME_MS = (1024 / 16000) * 1000;
+
 /**
  * Audio kept from just before speech was detected, so the first syllable —
  * the one that triggered the VAD — is not clipped off the utterance.
@@ -52,8 +55,27 @@ export class UserAudioStream {
   private preRoll: Buffer[] = [];
   private preRollBytes = 0;
 
+  /**
+   * Two clocks, because two different questions are being asked.
+   *
+   * `audioMs` counts the audio the VAD has actually consumed, and decides when
+   * a speaker paused. That has to be measured in audio: a pause is a property
+   * of what was said, so it must not change with how the packets happened to
+   * arrive. Measuring it with `Date.now()` made utterance boundaries depend on
+   * network timing — a burst after a reconnect would run two sentences
+   * together, and a stall would split one in half.
+   *
+   * `lastChunkAt` is wall-clock, and answers the opposite question: has audio
+   * stopped *arriving*? Nothing but real time can answer that — when a stream
+   * stalls, the audio clock stalls with it, so an audio-only design would hold
+   * a half-finished utterance open for ever.
+   */
+  private audioMs = 0;
+  private lastSpeechAudioMs = 0;
+  private lastChunkAt = Date.now();
+
+  /** Wall-clock silence that means the stream itself stopped delivering. */
   private inactivityTimeout = 1500; // ms
-  private lastSpeechTime = 0;
   private activationThreshold = config.ACTIVATION_THRESHOLD;
   private deactivationThreshold = config.DEACTIVATION_THRESHOLD;
   private silenceDuration = config.SILENCE_DURATION;
@@ -128,6 +150,10 @@ export class UserAudioStream {
    */
   private async processAudioChunk(chunk: Buffer) {
     try {
+      // Audio arrived, whatever it contains — this is the stall detector's
+      // input, and it must be updated even for a chunk that decodes to nothing.
+      this.lastChunkAt = Date.now();
+
       const pcm16k = this.downsampler.push(chunk);
       if (pcm16k.length === 0) return;
 
@@ -155,6 +181,8 @@ export class UserAudioStream {
 
   /** Run one 1024-sample frame through the VAD and the speech state machine. */
   private async processVadFrame(frame: Buffer) {
+    this.audioMs += VAD_FRAME_MS;
+
     const float32Data = new Float32Array(frame.length / 2);
     for (let i = 0; i < float32Data.length; i++) {
       float32Data[i] = frame.readInt16LE(i * 2) / 32768;
@@ -172,7 +200,7 @@ export class UserAudioStream {
       : speechConfidence >= this.activationThreshold;
 
     if (speechDetected) {
-      this.lastSpeechTime = Date.now();
+      this.lastSpeechAudioMs = this.audioMs;
 
       if (!this.isSpeaking) {
         this.isSpeaking = true;
@@ -189,7 +217,7 @@ export class UserAudioStream {
         this.preRollBytes = 0;
       }
     } else if (this.isSpeaking) {
-      const silence = Date.now() - this.lastSpeechTime;
+      const silence = this.audioMs - this.lastSpeechAudioMs;
       if (silence > this.silenceDuration) {
         logger.info(`Speech end detected for user ${this.userId}`);
         this.endUtterance();
@@ -218,8 +246,11 @@ export class UserAudioStream {
   }
 
   /**
-   * Finalize a stale utterance when speech confidence never formally dropped
-   * but no speech has been detected for a while.
+   * Close an utterance that the audio clock can no longer close, because audio
+   * stopped arriving at all — a muted speaker, a dropped connection, a stalled
+   * stream. Deliberately wall-clock: when no packets arrive, no audio is
+   * consumed, so the silence rule in `processVadFrame` never advances and the
+   * utterance would hang open with its transcript never requested.
    */
   private scheduleInactivityCheck() {
     const interval = setInterval(() => {
@@ -229,10 +260,10 @@ export class UserAudioStream {
       }
 
       if (this.isSpeaking && this.currentUtterance) {
-        const silence = Date.now() - this.lastSpeechTime;
-        if (silence > this.inactivityTimeout) {
+        const stalledFor = Date.now() - this.lastChunkAt;
+        if (stalledFor > this.inactivityTimeout) {
           logger.info(
-            `Finalizing utterance due to inactivity for user ${this.userId}`
+            `Finalizing utterance for user ${this.userId}: no audio for ${stalledFor}ms`
           );
           this.endUtterance();
         }

@@ -35,7 +35,11 @@ interface Captured {
  * Re-encodes the 16 kHz mono fixture as the 48 kHz stereo opus Discord sends,
  * then runs it through the stream and returns what was segmented.
  */
-async function runPipeline(pcm16kMono: Buffer): Promise<Captured[]> {
+async function runPipeline(
+  pcm16kMono: Buffer,
+  /** Milliseconds between packets. 0 feeds everything at once. */
+  packetIntervalMs = 0
+): Promise<Captured[]> {
   const encoder = new OpusScript(48000, 2, OpusScript.Application.AUDIO);
   const frames = Math.floor(pcm16kMono.length / 2 / 320); // 20 ms at 16 kHz
   const packets: Buffer[] = [];
@@ -68,17 +72,18 @@ async function runPipeline(pcm16kMono: Buffer): Promise<Captured[]> {
     }
   );
 
-  // Fed at realtime, one 20 ms packet per 20 ms, because `UserAudioStream`
-  // measures silence against the wall clock (`Date.now()`) rather than against
-  // the audio it has consumed. A faster feed compresses the 1.6 s gap between
-  // the sentences into a few milliseconds, and the two merge into one segment.
-  // That coupling is why this test cannot be sped up without changing the
-  // segmentation logic itself.
+  // Fed as fast as the pipeline will take it. Segmentation is measured on the
+  // audio clock, so the result must not depend on delivery speed — that is
+  // exactly what the "faster than realtime" test below pins down.
   for (const packet of packets) {
     audioStream.write(packet);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    if (packetIntervalMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, packetIntervalMs));
+    }
   }
   audioStream.end();
+
+  // Wait for the stall detector to close the final utterance.
   await new Promise((resolve) => setTimeout(resolve, 2500));
   stream.destroy();
   return captured;
@@ -119,4 +124,35 @@ test("real speech survives decode, downsample and VAD as split segments", async 
     captureRatio > 0.6,
     `captured only ${(captureRatio * 100).toFixed(0)}% of the audio`
   );
+});
+
+test("segmentation does not depend on how fast the packets arrive", async () => {
+  // Utterance boundaries are a property of the speech, not of the network. This
+  // used to be false: silence was measured with `Date.now()`, so a burst — a
+  // reconnect catching up, or jitter — merged two sentences into one utterance,
+  // and this test failed with 1 segment instead of 2.
+  const { pcm } = readPcm(readFileSync(FIXTURE));
+
+  const instant = await runPipeline(pcm);
+  const paced = await runPipeline(pcm, 8); // 8 ms between 20 ms packets
+
+  assert.equal(instant.length, 2);
+  assert.deepEqual(
+    paced.map((segment) => segment.finalized),
+    instant.map((segment) => segment.finalized)
+  );
+  assert.equal(
+    paced.length,
+    instant.length,
+    "a slower feed must produce the same segments as an instant one"
+  );
+
+  // The captured durations should match closely, not merely the segment count.
+  instant.forEach((segment, index) => {
+    const delta = Math.abs(segment.bytes - paced[index].bytes) / 32000;
+    assert.ok(
+      delta < 0.4,
+      `segment ${index + 1} differs by ${delta.toFixed(2)}s between feed speeds`
+    );
+  });
 });

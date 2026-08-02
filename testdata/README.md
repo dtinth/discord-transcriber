@@ -28,7 +28,12 @@ that decides when a person is talking.
 
 ## Pacing
 
-`src/pipeline.test.ts` feeds this at realtime, one 20 ms packet per 20 ms, which
-is why it takes ~11 s. That is not caution: `UserAudioStream` measures silence
-with `Date.now()` rather than by counting the audio it has consumed, so a faster
-feed compresses the gap between the sentences and the two utterances merge.
+`src/pipeline.test.ts` feeds this as fast as the pipeline accepts it, and also
+feeds it paced, then asserts both produce the same segments. Utterance
+boundaries are decided on the audio clock — the audio the VAD has consumed —
+so they do not depend on how the packets arrived.
+
+That was not always true. Silence used to be measured with `Date.now()`, which
+tied segmentation to network timing: a burst after a reconnect merged two
+sentences into one utterance. The "does not depend on how fast the packets
+arrive" test exists to keep that from coming back.
