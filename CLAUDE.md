@@ -94,3 +94,10 @@ Required environment variables in `.env` file:
 - 1 second silence duration before ending speech detection
 - Uses hysteresis pattern to avoid rapid on/off switching during speech
 - Every 64 ms frame is processed (no frames skipped)
+- **Two clocks, deliberately.** A pause between utterances is measured on the
+  *audio clock* (`audioMs`, advanced per VAD frame), so utterance boundaries
+  depend on what was said and not on when packets arrived — measuring it with
+  `Date.now()` let a post-reconnect burst merge two sentences. A stalled stream
+  (no audio arriving at all) is the opposite question and stays *wall-clock*
+  (`lastChunkAt`), because when delivery stops the audio clock stops too and an
+  open utterance would otherwise never be finalized.
