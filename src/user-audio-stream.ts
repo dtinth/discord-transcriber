@@ -24,11 +24,24 @@ const PRE_ROLL_BYTES = 10240;
  * with Silero VAD, and routes the audio of each segment into an
  * {@link Utterance}.
  */
+/** What the stream needs from a speech segment. */
+export interface SpeechSegment {
+  addAudioData(pcm: Buffer): void;
+  finalize(): void;
+}
+
+/**
+ * Seam for tests: segmentation is decided here, but an {@link Utterance} talks
+ * to Discord and starts a vendor session. Tests substitute a recorder so the
+ * VAD path can be exercised against real audio with no network and no channel.
+ */
+export type SegmentFactory = (userId: string) => SpeechSegment;
+
 export class UserAudioStream {
   private opusDecoder: prism.opus.Decoder;
   private downsampler = new Downsampler();
   private vadInstance: NonRealTimeVAD | null = null;
-  private currentUtterance: Utterance | null = null;
+  private currentUtterance: SpeechSegment | null = null;
   private isProcessing = false;
   private isSpeaking = false;
   private destroyed = false;
@@ -51,7 +64,9 @@ export class UserAudioStream {
     private textChannel: TextBasedChannel,
     private audioStream: any,
     private asr: AsrSetup,
-    private onEnd: () => void
+    private onEnd: () => void,
+    private createSegment: SegmentFactory = (userId) =>
+      new Utterance(userId, textChannel, asr)
   ) {
     this.opusDecoder = new prism.opus.Decoder({
       rate: 48000,
@@ -163,11 +178,7 @@ export class UserAudioStream {
         this.isSpeaking = true;
         logger.info(`Speech start detected for user ${this.userId}`);
 
-        this.currentUtterance = new Utterance(
-          this.userId,
-          this.textChannel,
-          this.asr
-        );
+        this.currentUtterance = this.createSegment(this.userId);
 
         // Seed the utterance with the pre-roll so the syllable that woke the
         // VAD is part of the recording.
