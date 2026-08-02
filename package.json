@@ -8,6 +8,8 @@
     "start": "node --env-file=.env --experimental-transform-types src/index.ts",
     "dev": "node --env-file=.env --watch --experimental-transform-types src/index.ts",
     "test": "node --experimental-transform-types --test src/*.test.ts",
+    "test:deno": "deno test --allow-read --allow-env --allow-ffi src/*.test.ts",
+    "fixture": "node --env-file=.env --experimental-transform-types scripts/make-speech-fixture.ts",
     "typecheck": "tsc"
   },
   "keywords": [
