@@ -2,10 +2,12 @@ import { EndBehaviorType, VoiceConnection } from "@discordjs/voice";
 import type { TextBasedChannel } from "discord.js";
 import type { AsrSetup } from "./asr-setup.ts";
 import logger from "./logger.ts";
+import { SpeakerRegistry } from "./speaker-registry.ts";
 import { UserAudioStream } from "./user-audio-stream.ts";
 
 export class TranscriptionService {
-  private activeStreams: Map<string, UserAudioStream> = new Map();
+  /** One registry per transcription session, keyed by subscription id. */
+  private sessions: Map<string, SpeakerRegistry> = new Map();
   private transcriptionChannels: Map<string, TextBasedChannel> = new Map();
 
   constructor(private asr: AsrSetup) {}
@@ -22,58 +24,55 @@ export class TranscriptionService {
     // Store the text channel for sending transcriptions
     this.transcriptionChannels.set(subscriptionId, textChannel);
 
-    // Track active users to avoid duplicate subscriptions
-    const activeUsers = new Set<string>();
+    // Tracks which speakers already have a live stream (see SpeakerRegistry)
+    const speakers = new SpeakerRegistry();
+    this.sessions.set(subscriptionId, speakers);
 
-    // Set up audio receiving
     receiver.speaking.on("start", (userId) => {
       logger.debug(`User ${userId} started speaking`);
 
-      // Skip if we already have an active stream for this user
-      const streamKey = `${subscriptionId}_${userId}`;
-      if (activeUsers.has(userId)) {
-        return;
-      }
+      let audioStream: { destroy?: () => void } | undefined;
+      try {
+        speakers.start(userId, (onEnd) => {
+          audioStream = receiver.subscribe(userId, {
+            end: {
+              behavior: EndBehaviorType.AfterSilence,
+              duration: 2000,
+            },
+          });
 
-      // Mark user as active
-      activeUsers.add(userId);
-
-      // Create audio subscription
-      const audioStream = receiver.subscribe(userId, {
-        end: {
-          behavior: EndBehaviorType.AfterSilence,
-          duration: 2000,
-        },
-      });
-
-      // Create a new audio stream processor
-      const userStream = new UserAudioStream(
-        userId,
-        streamKey,
-        textChannel,
-        audioStream,
-        this.asr,
-        () => {
-          // Cleanup function
-          this.activeStreams.delete(streamKey);
-          activeUsers.delete(userId);
+          return new UserAudioStream(
+            userId,
+            `${subscriptionId}_${userId}`,
+            textChannel,
+            audioStream,
+            this.asr,
+            onEnd
+          );
+        });
+      } catch (error) {
+        // The registry has already released this speaker, so a later utterance
+        // still gets a fresh attempt. Just log it and drop the half-open
+        // subscription rather than leaking it.
+        logger.error(`Failed to start audio stream for user ${userId}:`, error);
+        try {
+          audioStream?.destroy?.();
+        } catch (cleanupError) {
+          logger.error("Error destroying audio stream:", cleanupError);
         }
-      );
-
-      // Store the stream processor
-      this.activeStreams.set(streamKey, userStream);
+      }
     });
 
     return subscriptionId;
   }
 
   stopTranscription(subscriptionId: string) {
-    // Close all active streams for this subscription
-    for (const [key, stream] of this.activeStreams.entries()) {
-      if (key.startsWith(`${subscriptionId}_`)) {
-        stream.destroy();
-        this.activeStreams.delete(key);
-      }
+    const speakers = this.sessions.get(subscriptionId);
+    if (speakers) {
+      speakers.destroyAll((error) =>
+        logger.error("Error destroying user audio stream:", error)
+      );
+      this.sessions.delete(subscriptionId);
     }
 
     // Clean up the channel reference

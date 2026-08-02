@@ -4,13 +4,18 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  opusscript:
+    hash: 7fawdwbo4uxpg4wlvx4ybvaole
+    path: patches/opusscript.patch
+
 importers:
 
   .:
     dependencies:
       '@discordjs/voice':
         specifier: ^0.19.2
-        version: 0.19.2(@discordjs/opus@0.10.0)(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)(opusscript@0.1.1)
+        version: 0.19.2(@discordjs/opus@0.10.0)(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)(opusscript@0.1.1(patch_hash=7fawdwbo4uxpg4wlvx4ybvaole))
       '@ricky0123/vad-node':
         specifier: ^0.0.3
         version: 0.0.3
@@ -22,10 +27,10 @@ importers:
         version: 14.27.0
       opusscript:
         specifier: ^0.1.1
-        version: 0.1.1
+        version: 0.1.1(patch_hash=7fawdwbo4uxpg4wlvx4ybvaole)
       prism-media:
         specifier: ^1.3.5
-        version: 1.3.5(@discordjs/opus@0.10.0)(opusscript@0.1.1)
+        version: 1.3.5(@discordjs/opus@0.10.0)(opusscript@0.1.1(patch_hash=7fawdwbo4uxpg4wlvx4ybvaole))
       vxasr:
         specifier: 0.1.0-next.7
         version: 0.1.0-next.7
@@ -901,12 +906,12 @@ snapshots:
     dependencies:
       discord-api-types: 0.38.52
 
-  '@discordjs/voice@0.19.2(@discordjs/opus@0.10.0)(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)(opusscript@0.1.1)':
+  '@discordjs/voice@0.19.2(@discordjs/opus@0.10.0)(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)(opusscript@0.1.1(patch_hash=7fawdwbo4uxpg4wlvx4ybvaole))':
     dependencies:
       '@snazzah/davey': 0.1.12(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)
       '@types/ws': 8.18.1
       discord-api-types: 0.38.52
-      prism-media: 1.3.5(@discordjs/opus@0.10.0)(opusscript@0.1.1)
+      prism-media: 1.3.5(@discordjs/opus@0.10.0)(opusscript@0.1.1(patch_hash=7fawdwbo4uxpg4wlvx4ybvaole))
       tslib: 2.8.1
       ws: 8.21.1
     transitivePeerDependencies:
@@ -1516,7 +1521,7 @@ snapshots:
       onnxruntime-common: 1.21.0
       tar: 7.4.3
 
-  opusscript@0.1.1: {}
+  opusscript@0.1.1(patch_hash=7fawdwbo4uxpg4wlvx4ybvaole): {}
 
   package-json-from-dist@1.0.1: {}
 
@@ -1530,10 +1535,10 @@ snapshots:
       lru-cache: 10.4.3
       minipass: 7.1.2
 
-  prism-media@1.3.5(@discordjs/opus@0.10.0)(opusscript@0.1.1):
+  prism-media@1.3.5(@discordjs/opus@0.10.0)(opusscript@0.1.1(patch_hash=7fawdwbo4uxpg4wlvx4ybvaole)):
     optionalDependencies:
       '@discordjs/opus': 0.10.0
-      opusscript: 0.1.1
+      opusscript: 0.1.1(patch_hash=7fawdwbo4uxpg4wlvx4ybvaole)
 
   readable-stream@3.6.2:
     dependencies:

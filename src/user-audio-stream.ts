@@ -31,6 +31,7 @@ export class UserAudioStream {
   private currentUtterance: Utterance | null = null;
   private isProcessing = false;
   private isSpeaking = false;
+  private destroyed = false;
 
   /** Pending 16 kHz mono PCM not yet consumed as full VAD frames. */
   private vadBuffer: Buffer = Buffer.alloc(0);
@@ -229,6 +230,14 @@ export class UserAudioStream {
   }
 
   public destroy() {
+    // Idempotent: destroy runs from the stream's error path, its end path, and
+    // the service teardown, and `onEnd` releases this user's slot in the
+    // service's active set. Letting it run twice would release a slot that a
+    // *newer* stream for the same user now owns, and the service would then
+    // start a second concurrent stream for that speaker.
+    if (this.destroyed) return;
+    this.destroyed = true;
+
     this.isProcessing = false;
     this.endUtterance();
 

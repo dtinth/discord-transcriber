@@ -1,0 +1,30 @@
+diff --git a/index.js b/index.js
+index f7b11acc07ffbc31acee973eaddfdd10fb48d949..9f3abe9abff1f46da4320693b7455441397022c2 100644
+--- a/index.js
++++ b/index.js
+@@ -50,7 +50,14 @@ function OpusScript(samplingRate, channels, application, options) {
+ 
+     this.inPCMLength = MAX_FRAME_SIZE * this.channels * 2;
+     this.inPCMPointer = opusscript_native._malloc(this.inPCMLength);
+-    this.inPCM = opusscript_native.HEAPU16.subarray(this.inPCMPointer, this.inPCMPointer + this.inPCMLength);
++    // HEAPU16 is a Uint16Array, so subarray() indices are 16-bit elements while
++    // _malloc returns a byte address. Without the /2 the view starts at twice
++    // the allocated address and is twice as long, so every decode writes far
++    // outside its own allocation -- into another instance's opus state once a
++    // process holds more than one decoder. That corruption trips an assertion
++    // inside opus, and Emscripten's abort() then kills the whole shared module,
++    // making every later opus call in the process throw "Aborted()".
++    this.inPCM = opusscript_native.HEAPU16.subarray(this.inPCMPointer / 2, (this.inPCMPointer + this.inPCMLength) / 2);
+ 
+     this.inOpusPointer = opusscript_native._malloc(MAX_PACKET_SIZE);
+     this.inOpus = opusscript_native.HEAPU8.subarray(this.inOpusPointer, this.inOpusPointer + MAX_PACKET_SIZE);
+@@ -60,7 +67,8 @@ function OpusScript(samplingRate, channels, application, options) {
+ 
+     this.outPCMLength = MAX_FRAME_SIZE * this.channels * 2;
+     this.outPCMPointer = opusscript_native._malloc(this.outPCMLength);
+-    this.outPCM = opusscript_native.HEAPU16.subarray(this.outPCMPointer, this.outPCMPointer + this.outPCMLength);
++    // Same 16-bit-element vs byte-address fix as inPCM above.
++    this.outPCM = opusscript_native.HEAPU16.subarray(this.outPCMPointer / 2, (this.outPCMPointer + this.outPCMLength) / 2);
+ };
+ 
+ OpusScript.prototype.encode = function encode(buffer, frameSize) {
