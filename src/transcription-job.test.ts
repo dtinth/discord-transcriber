@@ -79,7 +79,10 @@ test("a healthy session resolves with transcript and usage", async () => {
   assert.equal(result.attempt, 1);
   assert.deepEqual(partials, ["hel"]);
   assert.deepEqual(result.usage, [{ sku: "s", unitPrice: 2, quantity: 3 }]);
-  assert.deepEqual(log, ["a:create", "a:finish", "a:close"]);
+  // Deliberately no "a:close": a session that ended on its own is left for the
+  // provider to dispose of, so qwen-omni can offer the connection to its reuse
+  // pool. Closing here would terminate it first and disable reuse silently.
+  assert.deepEqual(log, ["a:create", "a:finish"]);
 });
 
 test("retry rotates through the configuration list with backoff", async () => {
@@ -120,10 +123,11 @@ test("retry rotates through the configuration list with backoff", async () => {
   ]);
   // 1s backoff before attempt 2.
   assert.equal(timers.now() - start, 1000);
-  // Both sessions were closed.
+  // The failed session is closed — nothing else would release its socket. The
+  // one that ended cleanly is left to the provider (see the note above).
   assert.deepEqual(
     log.filter((entry) => entry.endsWith(":close")),
-    ["bad:close", "good:close"]
+    ["bad:close"]
   );
 });
 
@@ -194,5 +198,78 @@ test("watchdog fails a vendor that goes fully silent after finish", async () => 
     ),
     /no result within/
   );
+  // The watchdog fired rather than the vendor ending the turn, so this socket
+  // is ours to release.
   assert.deepEqual(log, ["d:create", "d:finish", "d:close"]);
+});
+
+// Session reuse depends entirely on this contract: qwen-omni offers its
+// connection to the pool immediately after `onEnd`, so a caller that closes on
+// a clean end silently gets no reuse — no error, just a larger bill.
+test("clientId reaches the provider, and a clean end leaves the socket alone", async () => {
+  const timers = new FakeTimers();
+  const log: string[] = [];
+  const seen: Array<string | undefined> = [];
+
+  const provider: ASRProvider = {
+    createSession(callbacks) {
+      seen.push((callbacks as { clientId?: string }).clientId);
+      log.push("create");
+      return {
+        sendAudio() {},
+        finish() {
+          callbacks.onFinal?.("hi");
+          callbacks.onEnd?.();
+        },
+        close() {
+          log.push("close");
+        },
+      };
+    },
+  };
+
+  await timers.runUntil(
+    runTranscriptionJob({
+      recording: endedRecording(),
+      configurations: [definition("q/mock", provider)],
+      env: {},
+      clientId: "speaker-7",
+      timers,
+    })
+  );
+
+  assert.deepEqual(seen, ["speaker-7"]);
+  assert.ok(!log.includes("close"), "a cleanly ended session must not be closed");
+});
+
+test("an aborted job still releases the socket", async () => {
+  const timers = new FakeTimers();
+  const log: string[] = [];
+  const abort = new AbortController();
+  const provider: ASRProvider = {
+    createSession() {
+      queueMicrotask(() => abort.abort());
+      return {
+        sendAudio() {},
+        finish() {},
+        close() {
+          log.push("close");
+        },
+      };
+    },
+  };
+
+  await assert.rejects(
+    timers.runUntil(
+      runTranscriptionJob({
+        recording: endedRecording(),
+        configurations: [definition("a/mock", provider)],
+        env: {},
+        maxAttempts: 1,
+        signal: abort.signal,
+        timers,
+      })
+    )
+  );
+  assert.deepEqual(log, ["close"]);
 });

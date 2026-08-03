@@ -75,7 +75,7 @@ export class UserAudioStream {
   private lastChunkAt = Date.now();
 
   /** Wall-clock silence that means the stream itself stopped delivering. */
-  private inactivityTimeout = 1500; // ms
+  private inactivityTimeout = config.STALL_TIMEOUT_MS;
   private activationThreshold = config.ACTIVATION_THRESHOLD;
   private deactivationThreshold = config.DEACTIVATION_THRESHOLD;
   private silenceDuration = config.SILENCE_DURATION;
@@ -88,7 +88,15 @@ export class UserAudioStream {
     private asr: AsrSetup,
     private onEnd: () => void,
     private createSegment: SegmentFactory = (userId) =>
-      new Utterance(userId, textChannel, asr)
+      // `streamKey` is (session, speaker): stable across this speaker's
+      // utterances but never shared with anyone else, which is exactly the
+      // grouping vendor session reuse wants.
+      new Utterance(
+        userId,
+        textChannel,
+        asr,
+        config.ASR_SESSION_REUSE ? streamKey : undefined
+      )
   ) {
     this.opusDecoder = new prism.opus.Decoder({
       rate: 48000,

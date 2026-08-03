@@ -34,6 +34,12 @@ export interface TranscriptionJobOptions {
   /** Ordered model configurations; attempt i uses `list[(i-1) % length]`. */
   configurations: readonly ConfigurationDefinition[];
   env: ProviderEnv;
+  /**
+   * Identifies the speaker, so a provider that supports session reuse can hand
+   * the same vendor connection to their next utterance (and with it, the
+   * context of what they just said). Omitted, every turn opens a fresh one.
+   */
+  clientId?: string;
   onPartial?: (text: string) => void;
   onAttemptStart?: (attempt: number, configurationId: string) => void;
   maxAttempts?: number;
@@ -59,6 +65,7 @@ export async function runTranscriptionJob(
     recording,
     configurations,
     env,
+    clientId,
     onPartial,
     onAttemptStart,
     maxAttempts = MAX_ATTEMPTS,
@@ -92,6 +99,7 @@ export async function runTranscriptionJob(
         recording,
         onPartial,
         finishTimeoutMs,
+        clientId,
         signal,
         timers,
       });
@@ -121,6 +129,7 @@ interface AttemptOptions {
   recording: Recording;
   onPartial?: (text: string) => void;
   finishTimeoutMs: number;
+  clientId?: string;
   signal?: AbortSignal;
   timers?: Timers;
 }
@@ -128,8 +137,15 @@ interface AttemptOptions {
 /**
  * One session against one provider. Resolves with the transcript when the
  * session ends, rejects on session error, feeder error, or a vendor that goes
- * silent after `finish()`. The session's socket is always released: `close()`
- * runs in the `finally`, and is idempotent for a session that already ended.
+ * silent after `finish()`.
+ *
+ * The socket is always released, but *how* depends on the ending. A session
+ * that ended on its own is left alone: the provider decides what to do with
+ * its connection once the turn is over, and for `qwen-omni` with a `clientId`
+ * that means offering it to the reuse pool. Calling `close()` there would
+ * terminate the socket before the pool could take it, which disables reuse
+ * silently — no error, just a quietly larger bill. Every other ending (error,
+ * watchdog, abort) still closes, because nothing else will.
  */
 function runAttempt(
   options: AttemptOptions
@@ -144,6 +160,8 @@ function runAttempt(
 
   let session: ASRSession | null = null;
   let watchdog: unknown;
+  /** True once the vendor ended the turn itself — see the note above. */
+  let endedItself = false;
 
   return new Promise<{ text: string; usage: UsageRecord[] }>(
     (resolve, reject) => {
@@ -157,6 +175,7 @@ function runAttempt(
       };
 
       session = provider.createSession({
+        clientId: options.clientId,
         onPartial: (text) => onPartial?.(text),
         onFinal: (text) => {
           finalText = text;
@@ -164,7 +183,10 @@ function runAttempt(
         onUsage: (records) => {
           usage.push(...records);
         },
-        onEnd: () => settle(() => resolve({ text: finalText ?? "", usage })),
+        onEnd: () => {
+          endedItself = true;
+          settle(() => resolve({ text: finalText ?? "", usage }));
+        },
         onError: (error) => settle(() => reject(error)),
       });
 
@@ -176,10 +198,21 @@ function runAttempt(
         timers: options.timers,
       })
         .then(() => {
-          // `finish()` has been sent (unless aborted). A vendor that now goes
-          // silent would hang this attempt forever without a watchdog. If a
-          // final transcript already arrived, salvage it rather than retry.
-          if (settled || feederAbort.signal.aborted) return;
+          if (settled) return;
+
+          // Aborted before `finish()` went out, so no vendor reply is coming.
+          // This has to settle the attempt rather than return quietly: an
+          // unsettled promise never reaches the `finally`, so the session would
+          // never be closed and its socket would leak for the rest of the
+          // process — against a vendor that caps concurrent connections.
+          if (feederAbort.signal.aborted) {
+            settle(() => reject(new Error("Transcription attempt was aborted")));
+            return;
+          }
+
+          // `finish()` has been sent. A vendor that now goes silent would hang
+          // this attempt forever without a watchdog. If a final transcript
+          // already arrived, salvage it rather than retry.
           watchdog = timers.setTimeout(() => {
             settle(() => {
               if (finalText !== null) {
@@ -200,6 +233,6 @@ function runAttempt(
     options.signal?.removeEventListener("abort", abortFeeder);
     if (watchdog !== undefined) timers.clearTimeout(watchdog);
     abortFeeder();
-    session?.close();
+    if (!endedItself) session?.close();
   });
 }

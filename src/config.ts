@@ -1,3 +1,9 @@
+/** Reads an integer env var, falling back when unset or unparseable. */
+function intEnv(name: string, fallback: number): number {
+  const parsed = parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 export default {
   // Discord bot token
   DISCORD_TOKEN: process.env.DISCORD_TOKEN || "",
@@ -7,6 +13,16 @@ export default {
     process.env.ASR_CONFIGURATIONS ||
     "qwen-omni/qwen3.5-omni-flash-realtime-2026-03-15",
 
+  /**
+   * Reuse a speaker's vendor connection for their next utterance, so the model
+   * keeps the context of what they just said. Short sentences transcribe better
+   * with it, but the vendor re-processes prior turns as context, so it costs
+   * more — measured at +87% over six turns, see
+   * `scripts/measure-session-reuse.ts`. Set to 0 to go back to a fresh
+   * connection per utterance.
+   */
+  ASR_SESSION_REUSE: process.env.ASR_SESSION_REUSE !== "0",
+
   // Discord command prefix
   PREFIX: "!",
 
@@ -15,12 +31,39 @@ export default {
 
   // Command for stopping transcription
   STOP_COMMAND: "stop",
-  
+
   // Logging level (1=error, 2=warn, 3=log, 4=info, 5=debug)
-  LOG_LEVEL: parseInt(process.env.LOG_LEVEL || "4", 10),
-  
+  LOG_LEVEL: intEnv("LOG_LEVEL", 4),
+
   // Voice detection settings
   ACTIVATION_THRESHOLD: 0.5,   // Confidence threshold to start utterance
   DEACTIVATION_THRESHOLD: 0.3, // Lower threshold to maintain active utterance
-  SILENCE_DURATION: 1000,      // Allow 1 second of silence before ending speech
+
+  /**
+   * Silence *within the audio* that ends an utterance, in milliseconds.
+   *
+   * Raising it joins short sentences into one utterance, which gives the model
+   * more context in a single turn — the cheap alternative to session reuse. It
+   * is bounded in practice by {@link RECEIVER_SILENCE_MS}: once Discord stops
+   * sending the stream, the utterance is finalized regardless, so raising this
+   * past that value has little effect on its own.
+   */
+  SILENCE_DURATION: intEnv("SILENCE_DURATION", 1500),
+
+  /**
+   * Wall-clock silence, in milliseconds, that means audio stopped *arriving* —
+   * a mute, a disconnect, a stalled stream. Kept above
+   * {@link SILENCE_DURATION} so that whenever packets are actually flowing the
+   * audio clock decides where an utterance ends; this only takes over when
+   * there is no audio left to measure.
+   */
+  STALL_TIMEOUT_MS: intEnv("STALL_TIMEOUT_MS", 2000),
+
+  /**
+   * How long Discord waits, in milliseconds, before it ends a speaker's audio
+   * stream. This is the ceiling on {@link SILENCE_DURATION}: once the stream
+   * ends, the utterance is finalized whatever the VAD thinks, so it is kept a
+   * second above it rather than pinned to Discord's 2000 ms default.
+   */
+  RECEIVER_SILENCE_MS: intEnv("RECEIVER_SILENCE_MS", 2500),
 };

@@ -30,6 +30,8 @@ Required environment variables in `.env` file:
 - `DISCORD_TOKEN` - Discord bot token
 - `DASHSCOPE_API_KEY` - Alibaba Cloud DashScope key (for the default qwen-omni configuration)
 - `ASR_CONFIGURATIONS` - (Optional) Comma-separated vxasr configuration ids in retry order
+- `SILENCE_DURATION` / `STALL_TIMEOUT_MS` / `RECEIVER_SILENCE_MS` - (Optional) Segmentation timings; see `.env.example`
+- `ASR_SESSION_REUSE` - (Optional) `0` disables qwen-omni connection reuse
 - `LOG_LEVEL` - (Optional) Logging level (1=error, 2=warn, 3=log, 4=info, 5=debug)
 
 ## TypeScript Configuration
@@ -48,7 +50,8 @@ Required environment variables in `.env` file:
   - The `Recording` owns each utterance's audio; sessions read through a cursor, so a failed session loses nothing
   - The paced feeder starts streaming while the person is still speaking — a streaming provider (qwen) shows live partials during speech; qwen-omni streams its transcript after `finish()`
   - Retry replays the whole recording: fast-dump when the configuration's `supportsFastDump` metadata says so, realtime pacing otherwise
-  - Vendors cap concurrent sockets: `session.close()` runs in a `finally` on every path
+  - **A cleanly ended session is NOT closed by the bot.** The provider owns its connection once the turn ends, and `qwen-omni` offers it to the reuse pool right after `onEnd`; closing there would terminate it first and disable reuse with no error, only a larger bill. Every other ending (error, watchdog, abort) still closes, since nothing else would
+  - Session reuse (`ASR_SESSION_REUSE`, on by default) passes the `(session, speaker)` key as vxasr's `clientId`, so a speaker's next utterance keeps the previous turn's context — better on short sentences, but the vendor re-bills prior turns as context (measured +87% over six turns, `scripts/measure-session-reuse.ts`), bounded by `QWEN_OMNI_STICKY_MAX_AUDIO_SECONDS` (default 100)
   - After 5 failed attempts the message shows an error with the audio attached as WAV
   - Empty/whitespace transcript → the message is deleted (no speech)
 
@@ -91,7 +94,7 @@ Required environment variables in `.env` file:
 
 - Uses Silero VAD model through @ricky0123/vad-node
 - Configurable activation (0.5) and deactivation (0.3) thresholds
-- 1 second silence duration before ending speech detection
+- Three timings, ordered on purpose: `SILENCE_DURATION` (1500 ms, audio clock) ends an utterance while packets flow; `STALL_TIMEOUT_MS` (2000 ms, wall clock) takes over when audio stops arriving; `RECEIVER_SILENCE_MS` (2500 ms) is when Discord ends the stream and is the ceiling on both
 - Uses hysteresis pattern to avoid rapid on/off switching during speech
 - Every 64 ms frame is processed (no frames skipped)
 - **Two clocks, deliberately.** A pause between utterances is measured on the

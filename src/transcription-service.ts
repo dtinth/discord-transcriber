@@ -1,6 +1,7 @@
 import { EndBehaviorType, VoiceConnection } from "@discordjs/voice";
 import type { TextBasedChannel } from "discord.js";
 import type { AsrSetup } from "./asr-setup.ts";
+import config from "./config.ts";
 import logger from "./logger.ts";
 import { SpeakerRegistry } from "./speaker-registry.ts";
 import { UserAudioStream } from "./user-audio-stream.ts";
@@ -37,7 +38,7 @@ export class TranscriptionService {
           audioStream = receiver.subscribe(userId, {
             end: {
               behavior: EndBehaviorType.AfterSilence,
-              duration: 2000,
+              duration: config.RECEIVER_SILENCE_MS,
             },
           });
 

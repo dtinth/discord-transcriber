@@ -51,3 +51,13 @@ test("end to end against the real vxasr mock provider", async () => {
   assert.equal(result.attempt, 1);
   assert.ok(partials.length > 0);
 });
+
+test("the sticky audio cap defaults without overriding the operator", () => {
+  const setup = loadAsrSetup("mock/mock", {});
+  assert.equal(setup.env.QWEN_OMNI_STICKY_MAX_AUDIO_SECONDS, "100");
+
+  const overridden = loadAsrSetup("mock/mock", {
+    QWEN_OMNI_STICKY_MAX_AUDIO_SECONDS: "45",
+  });
+  assert.equal(overridden.env.QWEN_OMNI_STICKY_MAX_AUDIO_SECONDS, "45");
+});
