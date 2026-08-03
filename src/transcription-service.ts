@@ -20,7 +20,12 @@ export class TranscriptionService {
     const receiver = connection.receiver;
 
     // Create a subscription ID to track this transcription session
-    const subscriptionId = Date.now().toString();
+    // Random rather than `Date.now()`, because this id is half of the vendor
+    // session-reuse key (`${subscriptionId}_${userId}`) and vxasr's connection
+    // pool is process-wide. Two guilds starting transcription in the same
+    // millisecond would otherwise give a user who is in both the same key, and
+    // one conversation's context could reach the other channel.
+    const subscriptionId = crypto.randomUUID();
 
     // Store the text channel for sending transcriptions
     this.transcriptionChannels.set(subscriptionId, textChannel);
