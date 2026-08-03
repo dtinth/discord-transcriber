@@ -25,7 +25,9 @@ export class Utterance {
   constructor(
     userId: string,
     textChannel: TextBasedChannel,
-    asr: AsrSetup
+    asr: AsrSetup,
+    /** Groups this speaker's utterances for vendor session reuse. */
+    private clientId?: string
   ) {
     this.updater = new ThrottledMessageUpdater(userId, textChannel);
     void this.runJob(userId, asr);
@@ -60,6 +62,7 @@ export class Utterance {
         recording: this.recording,
         configurations: asr.configurations,
         env: asr.env,
+        clientId: this.clientId,
         signal: this.abort.signal,
         onPartial: (text) => {
           if (text.trim()) this.updater.setPartial(text.trim());

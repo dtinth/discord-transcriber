@@ -17,7 +17,23 @@ export interface AsrSetup {
  * problem — this runs at startup, where failing loudly beats failing on the
  * first utterance.
  */
+/**
+ * How much audio a reused qwen-omni connection may accumulate before it is
+ * retired. vxasr defaults to 180 s; this bot uses less because the vendor
+ * re-processes prior turns as context, so a long-lived connection gets steadily
+ * more expensive per utterance. An operator can still override it.
+ */
+const DEFAULT_STICKY_MAX_AUDIO_SECONDS = "100";
+
 export function loadAsrSetup(raw: string, env: ProviderEnv): AsrSetup {
+  // vxasr reads provider settings out of the env it is given, so defaults are
+  // applied by layering here rather than by mutating `process.env`.
+  env = {
+    ...env,
+    QWEN_OMNI_STICKY_MAX_AUDIO_SECONDS:
+      env.QWEN_OMNI_STICKY_MAX_AUDIO_SECONDS ?? DEFAULT_STICKY_MAX_AUDIO_SECONDS,
+  };
+
   const catalogue = createDefaultConfigurationCatalogue();
   const ids = raw
     .split(",")
