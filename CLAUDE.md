@@ -94,6 +94,7 @@ Required environment variables in `.env` file:
 
 - Uses Silero VAD model through @ricky0123/vad-node
 - Configurable activation (0.5) and deactivation (0.3) thresholds
+- `MAX_UTTERANCE_MS` (120 s) splits an utterance that never pauses — music or a noisy room otherwise grows one without limit. It splits and continues, so no audio is dropped
 - Three timings, ordered on purpose: `SILENCE_DURATION` (1500 ms, audio clock) ends an utterance while packets flow; `STALL_TIMEOUT_MS` (2000 ms, wall clock) takes over when audio stops arriving; `RECEIVER_SILENCE_MS` (2500 ms) is when Discord ends the stream and is the ceiling on both
 - Uses hysteresis pattern to avoid rapid on/off switching during speech
 - Every 64 ms frame is processed (no frames skipped)

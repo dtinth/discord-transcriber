@@ -51,6 +51,18 @@ export default {
   SILENCE_DURATION: intEnv("SILENCE_DURATION", 1500),
 
   /**
+   * Longest a single utterance may run, in milliseconds, before it is split and
+   * a new one continues.
+   *
+   * Silence ends an utterance, so without a cap anything that never pauses —
+   * music, a television, a noisy room — grows one utterance without limit: an
+   * ever-growing buffer, one enormous vendor turn, and a Discord message that
+   * shows nothing for as long as it lasts. Splitting keeps every second of
+   * audio; it only decides where one message ends and the next begins.
+   */
+  MAX_UTTERANCE_MS: intEnv("MAX_UTTERANCE_MS", 120_000),
+
+  /**
    * Wall-clock silence, in milliseconds, that means audio stopped *arriving* —
    * a mute, a disconnect, a stalled stream. Kept above
    * {@link SILENCE_DURATION} so that whenever packets are actually flowing the

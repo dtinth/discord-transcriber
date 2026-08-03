@@ -72,6 +72,8 @@ export class UserAudioStream {
    */
   private audioMs = 0;
   private lastSpeechAudioMs = 0;
+  /** Audio position where the open utterance began, for {@link maxUtteranceMs}. */
+  private utteranceStartedAtMs = 0;
   private lastChunkAt = Date.now();
 
   /** Wall-clock silence that means the stream itself stopped delivering. */
@@ -91,7 +93,8 @@ export class UserAudioStream {
     private asr: AsrSetup,
     private onEnd: () => void,
     private createSegment: SegmentFactory = (userId) =>
-      new Utterance(userId, textChannel, asr, clientId)
+      new Utterance(userId, textChannel, asr, clientId),
+    private maxUtteranceMs: number = config.MAX_UTTERANCE_MS
   ) {
     this.opusDecoder = new prism.opus.Decoder({
       rate: 48000,
@@ -210,6 +213,7 @@ export class UserAudioStream {
         logger.info(`Speech start detected for user ${this.userId}`);
 
         this.currentUtterance = this.createSegment(this.userId);
+        this.utteranceStartedAtMs = this.audioMs;
 
         // Seed the utterance with the pre-roll so the syllable that woke the
         // VAD is part of the recording.
@@ -218,6 +222,18 @@ export class UserAudioStream {
         }
         this.preRoll = [];
         this.preRollBytes = 0;
+      }
+      // Speech that never pauses would otherwise grow one utterance without
+      // limit. Split it and carry straight on, so the audio is all still
+      // transcribed — just as two messages rather than one endless one.
+      if (this.audioMs - this.utteranceStartedAtMs >= this.maxUtteranceMs) {
+        logger.info(
+          `Splitting a long utterance for user ${this.userId} at ` +
+            `${(this.maxUtteranceMs / 1000).toFixed(0)}s`
+        );
+        this.currentUtterance?.finalize();
+        this.currentUtterance = this.createSegment(this.userId);
+        this.utteranceStartedAtMs = this.audioMs;
       }
     } else if (this.isSpeaking) {
       const silence = this.audioMs - this.lastSpeechAudioMs;

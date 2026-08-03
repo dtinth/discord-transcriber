@@ -38,7 +38,8 @@ interface Captured {
 async function runPipeline(
   pcm16kMono: Buffer,
   /** Milliseconds between packets. 0 feeds everything at once. */
-  packetIntervalMs = 0
+  packetIntervalMs = 0,
+  maxUtteranceMs = 120_000
 ): Promise<Captured[]> {
   const encoder = new OpusScript(48000, 2, OpusScript.Application.AUDIO);
   const frames = Math.floor(pcm16kMono.length / 2 / 320); // 20 ms at 16 kHz
@@ -69,7 +70,8 @@ async function runPipeline(
         addAudioData: (pcm: Buffer) => (segment.bytes += pcm.length),
         finalize: () => (segment.finalized = true),
       } satisfies SpeechSegment;
-    }
+    },
+    maxUtteranceMs
   );
 
   // Fed as fast as the pipeline will take it. Segmentation is measured on the
@@ -155,4 +157,30 @@ test("segmentation does not depend on how fast the packets arrive", async () => 
       `segment ${index + 1} differs by ${delta.toFixed(2)}s between feed speeds`
     );
   });
+});
+
+test("speech that never pauses is split instead of growing without limit", async () => {
+  // Nothing in the fixture pauses for the 1.5 s the VAD wants, within a
+  // sentence — so with a 1 s cap the first sentence alone must be split, and
+  // no audio may be dropped on the way.
+  const { pcm } = readPcm(readFileSync(FIXTURE));
+  const capped = await runPipeline(pcm, 0, 1000);
+  const uncapped = await runPipeline(pcm);
+
+  assert.ok(
+    capped.length > uncapped.length,
+    `expected the cap to split utterances, got ${capped.length} vs ${uncapped.length}`
+  );
+  assert.ok(
+    capped.every((segment) => segment.finalized),
+    "every split segment must still be finalized, or its transcript is never requested"
+  );
+
+  // Splitting decides where messages break, it does not discard audio.
+  const cappedAudio = capped.reduce((n, s) => n + s.bytes, 0);
+  const uncappedAudio = uncapped.reduce((n, s) => n + s.bytes, 0);
+  assert.ok(
+    cappedAudio >= uncappedAudio * 0.95,
+    `split kept ${cappedAudio} bytes vs ${uncappedAudio} unsplit — audio was lost`
+  );
 });
