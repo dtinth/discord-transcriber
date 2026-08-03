@@ -17,6 +17,37 @@ export const DEBOUNCE_MS = 500;
 export const THROTTLE_MS = 1500;
 
 /**
+ * Discord's per-message character limit. Exceeding it fails the whole edit with
+ * "Invalid Form Body", which loses the transcript entirely — the message is
+ * left showing "Transcribing…" for ever. A long utterance reaches this easily:
+ * 196 s of speech produced one in production.
+ */
+export const DISCORD_MAX_CONTENT = 2000;
+
+/**
+ * Splits `text` into pieces that each fit within `limit`, preferring to break
+ * at a space and then at any character, so a long transcript arrives as several
+ * messages rather than not at all. Never drops content.
+ */
+export function splitForDiscord(text: string, limit: number): string[] {
+  if (text.length <= limit) return [text];
+
+  const parts: string[] = [];
+  let rest = text;
+  while (rest.length > limit) {
+    // Prefer the last space in range; fall back to a hard cut for text that
+    // has none (a long URL, or a language that does not space its words).
+    const window = rest.slice(0, limit + 1);
+    const breakAt = window.lastIndexOf(" ");
+    const cut = breakAt > limit * 0.5 ? breakAt : limit;
+    parts.push(rest.slice(0, cut).trimEnd());
+    rest = rest.slice(cut).trimStart();
+  }
+  if (rest.length > 0) parts.push(rest);
+  return parts;
+}
+
+/**
  * Owns one utterance's Discord message: the placeholder, throttled partial
  * updates, and the terminal states (final text, delete-on-no-speech, error
  * with the audio attached).
@@ -35,7 +66,7 @@ export class ThrottledMessageUpdater {
 
   constructor(
     private userId: string,
-    channel: TextBasedChannel,
+    private channel: TextBasedChannel,
     private timers: Timers = realTimers
   ) {
     this.chain =
@@ -73,9 +104,20 @@ export class ThrottledMessageUpdater {
     this.edit(this.render(`*${status}*`));
   }
 
-  /** Show the final transcript immediately, bypassing debounce and throttle. */
+  /**
+   * Show the final transcript immediately, bypassing debounce and throttle.
+   *
+   * A transcript longer than Discord allows is delivered as several messages
+   * rather than failing the edit and losing it — see {@link DISCORD_MAX_CONTENT}.
+   */
   finalize(text: string): Promise<void> {
-    return this.terminal(() => this.edit(this.render(text)));
+    const prefix = this.render("");
+    const parts = splitForDiscord(text, DISCORD_MAX_CONTENT - prefix.length);
+
+    return this.terminal(() => {
+      this.edit(this.render(parts[0]));
+      for (const part of parts.slice(1)) this.sendFollowUp(part);
+    });
   }
 
   /** No speech was detected: delete the message rather than say so. */
@@ -150,11 +192,33 @@ export class ThrottledMessageUpdater {
     const text = this.pendingText;
     this.pendingText = null;
     this.lastFlushAt = now;
-    this.edit(this.render(`${text} …`));
+    // A partial is transient, so it is trimmed rather than split: the newest
+    // words are the interesting ones, and a failed edit would show nothing.
+    const room = DISCORD_MAX_CONTENT - this.render(" …").length - 1;
+    const shown = text.length > room ? `…${text.slice(-room)}` : text;
+    this.edit(this.render(`${shown} …`));
   }
 
   private edit(content: string): void {
     this.withMessage(async (message) => message.edit(content));
+  }
+
+  /** Continues a transcript too long for one Discord message. */
+  private sendFollowUp(part: string): void {
+    this.chain = this.chain.then(async (message) => {
+      if (!message) return null;
+      try {
+        if ("send" in this.channel) {
+          await this.channel.send({
+            content: this.render(part),
+            flags: MessageFlags.SuppressNotifications,
+          });
+        }
+      } catch (error) {
+        logger.error("Error sending transcript continuation:", error);
+      }
+      return message;
+    });
   }
 
   /** Queue one Discord operation onto the serial chain. */
