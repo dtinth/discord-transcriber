@@ -82,21 +82,16 @@ export class UserAudioStream {
 
   constructor(
     private userId: string,
-    private streamKey: string,
+    /**
+     * Identifies this speaker for vendor session reuse. Undefined disables it.
+     */
+    private clientId: string | undefined,
     private textChannel: TextBasedChannel,
     private audioStream: any,
     private asr: AsrSetup,
     private onEnd: () => void,
     private createSegment: SegmentFactory = (userId) =>
-      // `streamKey` is (session, speaker): stable across this speaker's
-      // utterances but never shared with anyone else, which is exactly the
-      // grouping vendor session reuse wants.
-      new Utterance(
-        userId,
-        textChannel,
-        asr,
-        config.ASR_SESSION_REUSE ? streamKey : undefined
-      )
+      new Utterance(userId, textChannel, asr, clientId)
   ) {
     this.opusDecoder = new prism.opus.Decoder({
       rate: 48000,
