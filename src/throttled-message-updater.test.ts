@@ -4,8 +4,10 @@ import { MessageFlags } from "discord.js";
 import { FakeTimers, drainMicrotasks } from "./fake-timers.ts";
 import {
   DEBOUNCE_MS,
+  DISCORD_MAX_CONTENT,
   THROTTLE_MS,
   ThrottledMessageUpdater,
+  splitForDiscord,
 } from "./throttled-message-updater.ts";
 
 function fakeChannel(timers: FakeTimers) {
@@ -23,10 +25,14 @@ function fakeChannel(timers: FakeTimers) {
     },
   };
   const sendFlags: unknown[] = [];
+  const sent: string[] = [];
+  let placeholderSent = false;
   const channel = {
     send(payload: string | { content: string; flags?: unknown }) {
       const content = typeof payload === "string" ? payload : payload.content;
       if (typeof payload !== "string") sendFlags.push(payload.flags);
+      if (placeholderSent) sent.push(content);
+      placeholderSent = true;
       edits.push({ at: timers.now(), content });
       return Promise.resolve(message);
     },
@@ -35,6 +41,7 @@ function fakeChannel(timers: FakeTimers) {
     channel: channel as any,
     edits,
     sendFlags,
+    sent,
     get deleted() {
       return deleted;
     },
@@ -136,4 +143,62 @@ test("status updates show only before any partial text", async () => {
   updater.setStatus("Retrying (attempt 2)..."); // ignored: text is pending
   await timers.advance(THROTTLE_MS);
   assert.equal(fake.edits.at(-1)?.content, "<@u>: words …");
+});
+
+// A 196 s utterance produced a transcript past Discord's limit in production.
+// The edit failed with "Invalid Form Body" and the transcript was lost, leaving
+// the message stuck on "Transcribing…".
+test("splitForDiscord never drops content and prefers word boundaries", () => {
+  const words = Array.from({ length: 400 }, (_, i) => `word${i}`).join(" ");
+  const parts = splitForDiscord(words, 100);
+
+  assert.ok(parts.length > 1);
+  assert.ok(parts.every((part) => part.length <= 100));
+  assert.equal(parts.join(" "), words, "no content may be lost in the split");
+  assert.ok(
+    parts.every((part) => !part.startsWith(" ") && !part.endsWith(" ")),
+    "parts should be trimmed at their boundaries"
+  );
+});
+
+test("splitForDiscord still splits text with no spaces at all", () => {
+  const solid = "x".repeat(250);
+  const parts = splitForDiscord(solid, 100);
+  assert.deepEqual(parts.map((p) => p.length), [100, 100, 50]);
+  assert.equal(parts.join(""), solid);
+});
+
+test("a transcript longer than Discord allows arrives as several messages", async () => {
+  const timers = new FakeTimers();
+  const fake = fakeChannel(timers);
+  const updater = new ThrottledMessageUpdater("u", fake.channel, timers);
+  await drainMicrotasks();
+
+  const long = Array.from({ length: 900 }, (_, i) => `word${i}`).join(" ");
+  await updater.finalize(long);
+  await drainMicrotasks();
+
+  const delivered = [fake.edits[1], ...fake.sent.map((content) => ({ content }))]
+    .map((entry) => entry.content.replace(/^<@u>: /, ""))
+    .join(" ");
+  assert.equal(delivered, long, "the whole transcript must reach the channel");
+  assert.ok(
+    fake.edits.every((entry) => entry.content.length <= DISCORD_MAX_CONTENT),
+    "no message may exceed Discord's limit"
+  );
+  assert.ok(fake.sent.length >= 1, "the remainder should be sent as follow-ups");
+});
+
+test("an over-long partial is trimmed rather than failing the edit", async () => {
+  const timers = new FakeTimers();
+  const fake = fakeChannel(timers);
+  const updater = new ThrottledMessageUpdater("u", fake.channel, timers);
+  await drainMicrotasks();
+
+  updater.setPartial("y".repeat(5000));
+  await timers.advance(THROTTLE_MS);
+
+  const partial = fake.edits.at(-1)!;
+  assert.ok(partial.content.length <= DISCORD_MAX_CONTENT);
+  assert.ok(partial.content.includes("…"), "trimming should be visible");
 });
