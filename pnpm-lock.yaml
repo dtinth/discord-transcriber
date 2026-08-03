@@ -32,8 +32,8 @@ importers:
         specifier: ^1.3.5
         version: 1.3.5(@discordjs/opus@0.10.0)(opusscript@0.1.1(patch_hash=7fawdwbo4uxpg4wlvx4ybvaole))
       vxasr:
-        specifier: 0.1.0-next.7
-        version: 0.1.0-next.7
+        specifier: 0.1.0-next.8
+        version: 0.1.0-next.8
     devDependencies:
       '@tsconfig/node-lts':
         specifier: ^22.0.1
@@ -793,8 +793,8 @@ packages:
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
-  vxasr@0.1.0-next.7:
-    resolution: {integrity: sha512-QUJFwQohs7LZ+7o4oJ0sSr5CFwc08bAa6dqnQktG+YbjAqCiU+1MsuruOBAoCMJJxEuoLKty1z2x5HjKwMuJhw==}
+  vxasr@0.1.0-next.8:
+    resolution: {integrity: sha512-f8s5wxEWBFXERtjTsDHtTLc5T01wyMdwUYJxOau6EtCtJ4bE+4bXjliPo756kw3YysC79KLnVuVGbAFDeQu9Fg==}
     hasBin: true
 
   web-streams-polyfill@4.0.0-beta.3:
@@ -1658,7 +1658,7 @@ snapshots:
   util-deprecate@1.0.2:
     optional: true
 
-  vxasr@0.1.0-next.7:
+  vxasr@0.1.0-next.8:
     dependencies:
       groq-sdk: 0.15.0
       ws: 8.21.1
