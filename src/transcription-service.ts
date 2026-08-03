@@ -18,13 +18,16 @@ export class TranscriptionService {
     textChannel: TextBasedChannel
   ) {
     const receiver = connection.receiver;
+    // Discord allows a user one voice connection per guild, so (guild, speaker)
+    // *is* the identity of an audio stream — a stabler key for vendor session
+    // reuse than anything scoped to a single `!transcribe` session, and it
+    // cannot collide across guilds.
+    const guildId = connection.joinConfig.guildId;
 
     // Create a subscription ID to track this transcription session
-    // Random rather than `Date.now()`, because this id is half of the vendor
-    // session-reuse key (`${subscriptionId}_${userId}`) and vxasr's connection
-    // pool is process-wide. Two guilds starting transcription in the same
-    // millisecond would otherwise give a user who is in both the same key, and
-    // one conversation's context could reach the other channel.
+    // Random rather than `Date.now()`: two guilds starting transcription in the
+    // same millisecond would otherwise share this session's map entry, and
+    // stopping one would tear down the other's streams.
     const subscriptionId = crypto.randomUUID();
 
     // Store the text channel for sending transcriptions
@@ -49,7 +52,7 @@ export class TranscriptionService {
 
           return new UserAudioStream(
             userId,
-            `${subscriptionId}_${userId}`,
+            config.ASR_SESSION_REUSE ? `${guildId}_${userId}` : undefined,
             textChannel,
             audioStream,
             this.asr,
