@@ -86,9 +86,17 @@ export class Utterance {
         (sum, record) => sum + record.unitPrice * record.quantity,
         0
       );
+      // Audio tokens are logged because they make session reuse observable:
+      // on a reused connection the vendor re-processes prior turns, so this
+      // number climbs across a speaker's utterances instead of tracking only
+      // the length of the current one.
+      const audioTokens = result.usage
+        .filter((record) => record.sku.endsWith("input-audio-tokens"))
+        .reduce((sum, record) => sum + record.quantity, 0);
       logger.info(
         `Transcribed ${(this.recording.size / 32000).toFixed(1)}s for ${userId} ` +
-          `via ${result.configurationId} (attempt ${result.attempt}, $${cost.toFixed(6)})`
+          `via ${result.configurationId} (attempt ${result.attempt}, ` +
+          `$${cost.toFixed(6)}, ${audioTokens} audio tokens)`
       );
     } catch (error) {
       if (this.abort.signal.aborted) return;
