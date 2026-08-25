@@ -1,8 +1,10 @@
 import { joinVoiceChannel, VoiceConnectionStatus } from "@discordjs/voice";
 import { Client, Events, GatewayIntentBits } from "discord.js";
 import { loadAsrSetup, type AsrSetup } from "./asr-setup.ts";
+import type { BudgetLimits } from "./budget.ts";
 import config from "./config.ts";
 import { TranscriptionService } from "./transcription.ts";
+import { UsageStore } from "./usage-store.ts";
 
 // Check for required environment variables
 if (!config.DISCORD_TOKEN) {
@@ -55,7 +57,31 @@ client.on("error", (error) => {
 });
 
 // Initialize transcription service
-const transcriptionService = new TranscriptionService(asrSetup);
+// The ledger is opened before login: if the disk will not take the file, that
+// must stop the bot now rather than after it has spent money it cannot record.
+const usageStore = new UsageStore(config.USAGE_DB);
+const budgetLimits: BudgetLimits = {
+  totalUsd: config.BUDGET_USD,
+  perGuildUsd: config.BUDGET_PER_GUILD_USD,
+  period: config.BUDGET_PERIOD,
+};
+if (config.BUDGET_USD > 0) {
+  console.log(
+    `Budget: $${config.BUDGET_USD.toFixed(2)} per ${config.BUDGET_PERIOD}` +
+      (config.BUDGET_PER_GUILD_USD > 0
+        ? `, $${config.BUDGET_PER_GUILD_USD.toFixed(2)} per guild`
+        : "") +
+      ` (spent so far: $${usageStore.spentThisPeriod(config.BUDGET_PERIOD).toFixed(4)})`
+  );
+} else {
+  console.log("Budget: no limit set (BUDGET_USD is 0)");
+}
+
+const transcriptionService = new TranscriptionService(
+  asrSetup,
+  usageStore,
+  budgetLimits
+);
 
 // Map to track active transcription sessions
 const activeTranscriptions = new Map();
@@ -105,7 +131,8 @@ client.on(Events.MessageCreate, async (message) => {
 
       const subscription = transcriptionService.createTranscriptionStream(
         connection,
-        message.channel
+        message.channel,
+        { requesterId: message.author.id }
       );
 
       // Store the active transcription
@@ -128,6 +155,19 @@ client.on(Events.MessageCreate, async (message) => {
       console.error("Error joining voice channel:", error);
       message.reply("There was an error joining your voice channel.");
     }
+  } else if (command === config.COST_COMMAND) {
+    const summary = usageStore.summary(config.BUDGET_PERIOD, message.guildId ?? undefined);
+    const overall = usageStore.spentThisPeriod(config.BUDGET_PERIOD);
+    const cap =
+      config.BUDGET_USD > 0
+        ? ` of $${config.BUDGET_USD.toFixed(2)}`
+        : " (no limit set)";
+    message.reply(
+      `This server this ${config.BUDGET_PERIOD}: **$${summary.totalUsd.toFixed(4)}** — ` +
+        `${Math.round(summary.audioSeconds)}s of audio, ${summary.attempts} attempts` +
+        (summary.failedAttempts > 0 ? ` (${summary.failedAttempts} failed)` : "") +
+        `.\nAll servers: **$${overall.toFixed(4)}**${cap}.`
+    );
   } else if (command === config.STOP_COMMAND) {
     // Check if there's an active transcription
     const transcription = activeTranscriptions.get(message.guildId);

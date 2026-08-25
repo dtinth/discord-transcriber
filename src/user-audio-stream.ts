@@ -6,7 +6,7 @@ import type { AsrSetup } from "./asr-setup.ts";
 import config from "./config.ts";
 import { Downsampler } from "./downsample.ts";
 import logger from "./logger.ts";
-import { Utterance } from "./utterance.ts";
+import { Utterance, type UsageSink } from "./utterance.ts";
 
 /** Bytes per Silero VAD frame: 1024 samples of 16 kHz 16-bit mono (64 ms). */
 const VAD_FRAME_BYTES = 1024 * 2;
@@ -92,8 +92,9 @@ export class UserAudioStream {
     private audioStream: any,
     private asr: AsrSetup,
     private onEnd: () => void,
+    private usage?: UsageSink,
     private createSegment: SegmentFactory = (userId) =>
-      new Utterance(userId, textChannel, asr, clientId),
+      new Utterance(userId, textChannel, asr, clientId, usage),
     private maxUtteranceMs: number = config.MAX_UTTERANCE_MS
   ) {
     this.opusDecoder = new prism.opus.Decoder({

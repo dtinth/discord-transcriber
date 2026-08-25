@@ -42,6 +42,20 @@ export interface TranscriptionJobOptions {
   clientId?: string;
   onPartial?: (text: string) => void;
   onAttemptStart?: (attempt: number, configurationId: string) => void;
+  /**
+   * Fires once per attempt, successful or not, with what the vendor billed for
+   * it. Failed attempts cost money too — the vendor processed the audio before
+   * it errored — so anything counting spend must see them. The returned
+   * {@link TranscriptionResult} carries only the winning attempt's usage, which
+   * is why it cannot be the basis of a budget.
+   */
+  onAttemptFinished?: (info: {
+    attempt: number;
+    configurationId: string;
+    usage: UsageRecord[];
+    ok: boolean;
+    error?: string;
+  }) => void;
   maxAttempts?: number;
   backoffScheduleMs?: readonly number[];
   finishTimeoutMs?: number;
@@ -68,6 +82,7 @@ export async function runTranscriptionJob(
     clientId,
     onPartial,
     onAttemptStart,
+    onAttemptFinished,
     maxAttempts = MAX_ATTEMPTS,
     backoffScheduleMs = BACKOFF_SCHEDULE_MS,
     finishTimeoutMs = FINISH_TIMEOUT_MS,
@@ -87,6 +102,10 @@ export async function runTranscriptionJob(
     const definition = configurations[(attempt - 1) % configurations.length];
     onAttemptStart?.(attempt, definition.id);
 
+    // Declared outside the `try` so the failure path can report what the vendor
+    // billed before the attempt died.
+    const attemptUsageOut: UsageRecord[] = [];
+
     try {
       const resolution = definition.resolve(env);
       if (!resolution.ok) {
@@ -98,15 +117,29 @@ export async function runTranscriptionJob(
         fastDump: definition.supportsFastDump,
         recording,
         onPartial,
+        onUsage: (records) => attemptUsageOut.push(...records),
         finishTimeoutMs,
         clientId,
         signal,
         timers,
       });
 
+      onAttemptFinished?.({
+        attempt,
+        configurationId: definition.id,
+        usage: attemptUsageOut,
+        ok: true,
+      });
       return { text, usage, configurationId: definition.id, attempt };
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      onAttemptFinished?.({
+        attempt,
+        configurationId: definition.id,
+        usage: attemptUsageOut,
+        ok: false,
+        error: lastError.message,
+      });
       logger.warn(
         `Transcription attempt ${attempt}/${maxAttempts} (${definition.id}) failed:`,
         lastError.message
@@ -128,6 +161,7 @@ interface AttemptOptions {
   fastDump: boolean;
   recording: Recording;
   onPartial?: (text: string) => void;
+  onUsage?: (records: UsageRecord[]) => void;
   finishTimeoutMs: number;
   clientId?: string;
   signal?: AbortSignal;
@@ -151,6 +185,7 @@ function runAttempt(
   options: AttemptOptions
 ): Promise<{ text: string; usage: UsageRecord[] }> {
   const { provider, fastDump, recording, onPartial, finishTimeoutMs } = options;
+  const reportUsage = options.onUsage;
   const timers = options.timers ?? realTimers;
 
   // Stops the feeder (and its pacing sleeps) the moment the attempt settles.
@@ -182,6 +217,7 @@ function runAttempt(
         },
         onUsage: (records) => {
           usage.push(...records);
+          reportUsage?.(records);
         },
         onEnd: () => {
           endedItself = true;
