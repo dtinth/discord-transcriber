@@ -2,11 +2,14 @@
 
 ## Commands
 
-- `pnpm install` - Install dependencies
-- `pnpm dev` - Start development server with hot reloading
-- `pnpm start` - Start the application
-- `pnpm test` - Run unit tests (node:test, hermetic — no network, no credentials)
-- `pnpm typecheck` - Run TypeScript type checking
+**This project runs on Deno only.** There is no `package.json` and no Node path.
+
+- `deno install --frozen --allow-scripts=npm:onnxruntime-node` - Install dependencies. `--allow-scripts` is required: the VAD's native binary is fetched by a postinstall, and without it the bot starts and detects no speech
+- `deno task dev` - Start with hot reloading
+- `deno task start` - Start the application
+- `deno task test` - Run unit tests (`node:test` via Deno; hermetic — no network, no credentials)
+- `deno task check` - Type check
+- `deno task verify` - Prove this checkout can actually decode audio and load the VAD (also run in the Docker build and CI)
 
 ## Project Structure
 
@@ -15,6 +18,7 @@
 - `src/asr-setup.ts` - Parses and validates `ASR_CONFIGURATIONS` against the vxasr catalogue at startup
 - `src/transcription-service.ts` - Subscribes to voice receivers, one `UserAudioStream` per speaker
 - `src/user-audio-stream.ts` - Decodes opus, downsamples once to 16 kHz mono, segments speech with Silero VAD
+- `src/opus-stream.ts` - Opus → 48 kHz stereo PCM via `opus-decoder` (pure WASM, no native build, no patch)
 - `src/utterance.ts` - One speech segment: recording + Discord message + transcription job
 - `src/recording.ts` - Append-only 16 kHz mono PCM buffer; the source of truth for every attempt
 - `src/paced-feeder.ts` - Cursor over the recording feeding a vxasr session; unifies live streaming and retry replay
@@ -59,7 +63,8 @@ Required environment variables in `.env` file:
   - Empty/whitespace transcript → the message is deleted (no speech)
 
 - **Audio Processing**:
-  - Opus decoding via prism-media with opusscript (WASM; no native modules)
+  - Opus decoding via `opus-decoder` (`wasm-audio-decoders`), pure WASM
+  - **This replaced `prism-media` + `opusscript` and a `pnpm patch`.** opusscript computed its WASM heap views in element units against a byte address, so every decode wrote outside its own allocation and corrupted another decoder as soon as two people spoke — the bot went deaf mid-call. The fix was a private patch against a package last released in 2023, applied by pnpm, which a Deno-only project cannot do. `opus-decoder` needs no patch; `deno task verify` proves the audio is correct rather than merely that the module imports
   - 48 kHz stereo is downsampled exactly once, at ingest, to 16 kHz mono (3:1 group averaging)
   - Both VAD and vxasr consume the same 16 kHz mono stream
   - A ~320 ms pre-roll is kept while not speaking, so the syllable that triggers the VAD is not clipped
@@ -73,7 +78,8 @@ Required environment variables in `.env` file:
   - Final text bypasses debounce/throttle
 
 - **Testing**:
-  - `node:test` with `node --experimental-transform-types --test` — no test framework dependency, Deno-friendly
+  - `node:test` run by Deno — no test framework dependency
+  - `testdata/speech.opus` holds real Discord-shaped Opus packets, committed so no test needs an encoder. The only encoder available was the removed `opusscript`, and proving the decoder with it would rest on the thing it replaced
   - `FakeTimers` (src/fake-timers.ts) drives all timing-sensitive tests deterministically
   - The vxasr `mock/mock` configuration gives a hermetic end-to-end path
 

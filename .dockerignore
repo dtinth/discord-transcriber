@@ -1,0 +1,8 @@
+.git
+.env
+*.db
+*.db-*
+node_modules
+docs
+src/*.test.ts
+scripts/measure-session-reuse.ts

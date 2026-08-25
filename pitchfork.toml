@@ -9,8 +9,8 @@
 [daemons.bot]
 # Deno reads .env itself via --env-file, so the bot owns its credentials;
 # nothing secret lives in this file.
-run = "deno run --allow-all --env-file=.env src/index.ts"
-# Resolve node/pnpm through this project's mise.toml.
+run = "deno task start"
+# Resolve deno through this project's mise.toml.
 mise = true
 # The bot prints this once connected to Discord (src/index.ts).
 ready_output = "Logged in as"
