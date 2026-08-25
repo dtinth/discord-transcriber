@@ -48,6 +48,23 @@ A Discord bot that transcribes voice channel conversations using [vxasr](https:/
      - MESSAGE CONTENT INTENT
    - Save changes
 
+## Deploying with Docker
+
+Images are published to `ghcr.io/dtinth/discord-transcriber` for `linux/amd64`
+and `linux/arm64` on every push to `main`.
+
+```bash
+cp .env.example .env    # fill in DISCORD_TOKEN and DASHSCOPE_API_KEY
+docker compose up -d
+docker compose logs -f
+```
+
+Update with `docker compose pull && docker compose up -d`.
+
+**The `/data` volume is not optional.** It holds `usage.db`, the record of what
+has been spent. Without it every redeploy restarts the totals at zero, so the
+budget never stops anything — and nothing announces that, until the bill does.
+
 ## Usage
 
 Start the bot:
