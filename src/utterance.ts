@@ -7,6 +7,28 @@ import { Recording } from "./recording.ts";
 import { ThrottledMessageUpdater } from "./throttled-message-updater.ts";
 import { runTranscriptionJob } from "./transcription-job.ts";
 
+export interface TranscriptRow {
+  startedAt: number;
+  endedAt: number;
+  messageId: string | null;
+  speakerId: string;
+  text: string;
+}
+
+/**
+ * Where a session collects its utterances.
+ *
+ * Start and finish are both reported, and every utterance reports exactly one
+ * finish — including the silent ones, which contribute no row. That symmetry is
+ * what lets `!stop` know whether anything is still at the vendor; a sink that
+ * only heard about successes would wait for utterances that already gave up.
+ */
+export interface TranscriptSink {
+  utteranceStarted(): void;
+  /** `row` is null when the utterance produced no transcript worth keeping. */
+  utteranceFinished(row: TranscriptRow | null): void;
+}
+
 /** Where an utterance reports what each attempt cost. */
 export interface UsageSink {
   recordAttempt(info: {
@@ -31,20 +53,27 @@ export interface UsageSink {
  */
 export class Utterance {
   private recording = new Recording();
+  /** When the speaker began; the transcript is ordered by this. */
+  private readonly startedAt = Date.now();
+  private endedAt = 0;
+  private reported = false;
   private updater: ThrottledMessageUpdater;
   private abort = new AbortController();
   private finalized = false;
 
   constructor(
-    userId: string,
+    private readonly userId: string,
     textChannel: TextBasedChannel,
     asr: AsrSetup,
     /** Groups this speaker's utterances for vendor session reuse. */
     private clientId?: string,
     /** Receives the cost of every attempt, successful or not. */
-    private usage?: UsageSink
+    private usage?: UsageSink,
+    /** Receives this utterance once it is transcribed (or finally failed). */
+    private transcript?: TranscriptSink
   ) {
     this.updater = new ThrottledMessageUpdater(userId, textChannel);
+    this.transcript?.utteranceStarted();
     void this.runJob(userId, asr);
   }
 
@@ -58,6 +87,7 @@ export class Utterance {
   finalize(): void {
     if (this.finalized) return;
     this.finalized = true;
+    this.endedAt = Date.now();
     this.recording.end();
 
     if (this.recording.size === 0) {
@@ -65,10 +95,42 @@ export class Utterance {
       // Don't ask a vendor to transcribe zero bytes — just clean up.
       this.abort.abort();
       void this.updater.noSpeech();
+      void this.report(this.userId, null);
       return;
     }
 
     this.updater.setStatus("Transcribing...");
+  }
+
+  /**
+   * Hands this utterance to the session transcript. Never throws, and reports
+   * exactly once — a missed finish would leave `!stop` waiting for it.
+   */
+  private async report(userId: string, text: string | null): Promise<void> {
+    if (!this.transcript || this.reported) return;
+    this.reported = true;
+    try {
+      this.transcript.utteranceFinished(
+        text === null
+          ? null
+          : {
+              startedAt: this.startedAt,
+              endedAt: this.endedAt || Date.now(),
+              messageId: await this.updater.messageId(),
+              speakerId: userId,
+              text,
+            }
+      );
+    } catch (error) {
+      logger.error("Error recording the utterance for the transcript:", error);
+      // The count must still fall, or `!stop` waits for an utterance that is
+      // already finished.
+      try {
+        this.transcript.utteranceFinished(null);
+      } catch {
+        // Nothing further can be done here.
+      }
+    }
   }
 
   private async runJob(userId: string, asr: AsrSetup): Promise<void> {
@@ -106,8 +168,12 @@ export class Utterance {
       const text = result.text.trim();
       if (text) {
         await this.updater.finalize(text);
+        await this.report(userId, text);
       } else {
+        // Nothing was said: the message is deleted, and no row is added — but
+        // the finish is still reported, or `!stop` would wait for it.
         await this.updater.noSpeech();
+        await this.report(userId, null);
       }
 
       const cost = result.usage.reduce(
@@ -133,6 +199,9 @@ export class Utterance {
       const wav =
         this.recording.size > 0 ? writeWav(this.recording.toBuffer()) : undefined;
       await this.updater.fail(wav);
+      // Recorded with empty text: the transcript should show *that something
+      // was said here and we do not have it*, rather than omit the gap.
+      await this.report(userId, "");
     }
   }
 }

@@ -176,12 +176,42 @@ client.on(Events.MessageCreate, async (message) => {
       return;
     }
 
-    // Stop transcription
-    transcriptionService.stopTranscription(transcription.subscription);
-    transcription.connection.destroy();
+    // Remove it from the active map first, so a second `!stop` cannot start a
+    // second drain while this one is still waiting on the vendor.
     activeTranscriptions.delete(message.guildId);
 
-    message.reply("Voice transcription stopped.");
+    let attachment = null;
+    try {
+      attachment = await transcriptionService.finishAndBuildTranscript(
+        transcription.subscription,
+        () => {
+          void message.channel
+            .send("*Stopping — waiting for the last transcripts…*")
+            .catch(() => {});
+        }
+      );
+    } catch (error) {
+      console.error("Error building the session transcript:", error);
+    }
+
+    // The connection is destroyed only after the transcript is built: tearing
+    // it down first would abort the utterances still being transcribed, which
+    // are exactly the ones the file would otherwise be missing.
+    transcriptionService.stopTranscription(transcription.subscription);
+    transcription.connection.destroy();
+
+    if (attachment) {
+      await message
+        .reply({ content: "Voice transcription stopped.", files: [attachment] })
+        .catch(async (error) => {
+          console.error("Error uploading the transcript:", error);
+          await message
+            .reply("Voice transcription stopped, but the transcript could not be uploaded.")
+            .catch(() => {});
+        });
+    } else {
+      message.reply("Voice transcription stopped. Nothing was transcribed.");
+    }
   }
 });
 

@@ -28,6 +28,8 @@
 - `src/fake-timers.ts` - Deterministic clock for tests
 - `src/usage-store.ts` - SQLite ledger: one row per **attempt**, and the totals the budget reads
 - `src/budget.ts` - Decides whether another utterance may start; pure, so it is testable without Discord
+- `src/session-transcript.ts` - Collects a session's utterances and renders the CSV (RFC 4180 escaping)
+- `src/pending-utterances.ts` - Counts utterances still at the vendor, so `!stop` knows when the file is complete
 - `src/transcription.ts` - Re-export shim
 
 ## Environment Setup
@@ -90,6 +92,15 @@ Required environment variables in `.env` file:
 - A spent budget pauses transcription and says so once per session; the bot stays in the voice channel so `!stop` / `!transcribe` still behave normally. A new period releases it automatically
 - `!cost` reports the period's spend for the guild and overall
 - Deno needs `--allow-write` for the SQLite file (see `test:deno`)
+
+## Session transcript (`!stop`)
+
+- `!stop` uploads the session as CSV: `started_at, ended_at, message_id, speaker_id, speaker_name, text`, ordered by when people spoke (utterances complete out of order when speakers overlap or a retry happens)
+- **It waits, briefly, before sending.** The last utterance is nearly always still at the vendor when somebody stops the bot, and that is usually the part they want. Bounded by `DRAIN_TIMEOUT_MS` so a stalled vendor delays the file rather than preventing it; anything still missing is logged, not hidden
+- The voice connection is destroyed *after* the file is built — tearing it down first aborts the very utterances the file would be missing
+- An utterance that failed every attempt becomes a row with empty text: the transcript should show that something was said there and we do not have it. Silent utterances (deleted messages) are left out
+- Escaping is RFC 4180 and tested by parsing the output back, not by matching the string — transcripts contain commas, quotes and newlines, and naive writing corrupts the file at the first quote
+- Speaker names come from the guild cache and fall back to the id; a fetch here would put a network round trip in the transcription path
 
 ## Code Style Guidelines
 

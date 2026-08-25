@@ -85,6 +85,16 @@ export class ThrottledMessageUpdater {
         : Promise.resolve(null);
   }
 
+  /**
+   * The id of this utterance's Discord message, once it has one.
+   *
+   * Resolved through the same serial chain as every other operation, so it
+   * cannot report an id before the message exists — or after a delete.
+   */
+  messageId(): Promise<string | null> {
+    return this.chain.then((message) => message?.id ?? null);
+  }
+
   /** Show live partial text, subject to debounce + throttle. */
   setPartial(text: string): void {
     if (this.done) return;
