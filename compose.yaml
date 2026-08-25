@@ -1,0 +1,49 @@
+# Deploy:  docker compose up -d
+# Update:  docker compose pull && docker compose up -d
+# Logs:    docker compose logs -f
+#
+# Put the secrets in a `.env` file beside this one (see .env.example).
+# Compose reads it automatically; nothing secret belongs in this file.
+
+services:
+  transcriber:
+    image: ghcr.io/dtinth/discord-transcriber:latest
+    container_name: discord-transcriber
+    restart: unless-stopped
+
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN:?set DISCORD_TOKEN in .env}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:?set DASHSCOPE_API_KEY in .env}
+
+      # Spend cap. 0 means no cap, which is not what you want on a public bot.
+      BUDGET_USD: ${BUDGET_USD:-0}
+      BUDGET_PER_GUILD_USD: ${BUDGET_PER_GUILD_USD:-0}
+      BUDGET_PERIOD: ${BUDGET_PERIOD:-month}
+
+      ASR_CONFIGURATIONS: ${ASR_CONFIGURATIONS:-}
+      ASR_SESSION_REUSE: ${ASR_SESSION_REUSE:-1}
+      LOG_LEVEL: ${LOG_LEVEL:-4}
+
+      # Inside the container the ledger belongs on the volume below.
+      USAGE_DB: /data/usage.db
+
+    volumes:
+      # The spend ledger. **Not optional.** Without it every redeploy starts the
+      # totals at zero, so the budget silently never stops anything — the
+      # failure is invisible until the bill arrives.
+      - transcriber-data:/data
+
+    # A voice bot is mostly idle and then briefly busy per speaker. The limits
+    # are here so one runaway container cannot take the whole VPS down; raise
+    # them if you see the bot restarting under load.
+    mem_limit: 1g
+    cpus: 2.0
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  transcriber-data:
