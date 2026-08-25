@@ -1,10 +1,10 @@
 import { FrameProcessor, NonRealTimeVAD } from "@ricky0123/vad-node";
 import type { TextBasedChannel } from "discord.js";
 import { Buffer } from "node:buffer";
-import prism from "prism-media";
 import type { AsrSetup } from "./asr-setup.ts";
 import config from "./config.ts";
 import { Downsampler } from "./downsample.ts";
+import { OpusStreamDecoder } from "./opus-stream.ts";
 import logger from "./logger.ts";
 import { Utterance, type UsageSink } from "./utterance.ts";
 
@@ -41,7 +41,7 @@ export interface SpeechSegment {
 export type SegmentFactory = (userId: string) => SpeechSegment;
 
 export class UserAudioStream {
-  private opusDecoder: prism.opus.Decoder;
+  private opusDecoder = new OpusStreamDecoder();
   private downsampler = new Downsampler();
   private vadInstance: NonRealTimeVAD | null = null;
   private currentUtterance: SpeechSegment | null = null;
@@ -97,12 +97,6 @@ export class UserAudioStream {
       new Utterance(userId, textChannel, asr, clientId, usage),
     private maxUtteranceMs: number = config.MAX_UTTERANCE_MS
   ) {
-    this.opusDecoder = new prism.opus.Decoder({
-      rate: 48000,
-      channels: 2,
-      frameSize: 960,
-    });
-
     this.initializeVAD()
       .then(() => {
         this.processAudioStream();
@@ -114,6 +108,9 @@ export class UserAudioStream {
   }
 
   private async initializeVAD() {
+    // The decoder is WASM and needs a moment before its first packet; awaited
+    // alongside the VAD so no audio arrives before either is usable.
+    await this.opusDecoder.init();
     this.vadInstance = await NonRealTimeVAD.new({
       frameSamples: 1024, // Standard frame size for Silero VAD
       positiveSpeechThreshold: 0.5,
@@ -128,13 +125,14 @@ export class UserAudioStream {
   private async processAudioStream() {
     try {
       this.isProcessing = true;
-      this.audioStream.pipe(this.opusDecoder);
       this.scheduleInactivityCheck();
 
       try {
-        for await (const chunk of this.opusDecoder) {
+        // Discord's receive stream emits one Opus packet per chunk, so the
+        // decoder is called directly rather than piped through a transform.
+        for await (const packet of this.audioStream) {
           if (!this.isProcessing) break;
-          await this.processAudioChunk(chunk as Buffer);
+          await this.processAudioChunk(this.opusDecoder.decode(packet as Buffer));
         }
       } catch (streamError) {
         logger.error(`Stream error for user ${this.userId}:`, streamError);
@@ -155,13 +153,13 @@ export class UserAudioStream {
    * One decoded chunk: downsample once, route to the current utterance (or
    * the pre-roll), and run the VAD state machine over full frames.
    */
-  private async processAudioChunk(chunk: Buffer) {
+  private async processAudioChunk(pcm48kStereo: Buffer) {
     try {
       // Audio arrived, whatever it contains — this is the stall detector's
       // input, and it must be updated even for a chunk that decodes to nothing.
       this.lastChunkAt = Date.now();
 
-      const pcm16k = this.downsampler.push(chunk);
+      const pcm16k = this.downsampler.push(pcm48kStereo);
       if (pcm16k.length === 0) return;
 
       if (this.isSpeaking && this.currentUtterance) {
@@ -302,6 +300,12 @@ export class UserAudioStream {
 
     this.isProcessing = false;
     this.endUtterance();
+
+    try {
+      this.opusDecoder.free();
+    } catch (error) {
+      logger.error("Error freeing the opus decoder:", error);
+    }
 
     if (this.audioStream) {
       try {

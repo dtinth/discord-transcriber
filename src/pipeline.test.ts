@@ -4,7 +4,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import OpusScript from "opusscript";
 import { readPcm } from "vxasr/audio";
 import type { AsrSetup } from "./asr-setup.ts";
 import { UserAudioStream, type SpeechSegment } from "./user-audio-stream.ts";
@@ -19,11 +18,28 @@ import { UserAudioStream, type SpeechSegment } from "./user-audio-stream.ts";
  * over real speech (`testdata/speech.wav`, see `scripts/make-speech-fixture.ts`).
  */
 
-// Resolved from the working directory rather than from `import.meta.url`: the
-// latter does not type-check under Deno here, and the obvious fix (a deno.json)
-// risks moving Deno off this repo's `node_modules` — which is where
-// `patches/opusscript.patch` lives. Both runners are invoked from the repo root.
+// Resolved from the working directory; the task runs from the repo root.
 const FIXTURE = join(process.cwd(), "testdata", "speech.wav");
+/**
+ * The same audio as real Discord-shaped Opus packets, committed rather than
+ * encoded here. The only encoder available was `opusscript`, the package this
+ * project removed for corrupting its own heap — a test that used it to prove
+ * the decoder would rest on the very thing it replaced.
+ */
+const PACKETS = join(process.cwd(), "testdata", "speech.opus");
+
+/** Length-prefixed packets, as written by scripts/make-opus-fixture.mjs. */
+function readOpusPackets(bytes: Buffer): Buffer[] {
+  const packets: Buffer[] = [];
+  let offset = 0;
+  while (offset + 2 <= bytes.length) {
+    const length = bytes.readUInt16BE(offset);
+    offset += 2;
+    packets.push(bytes.subarray(offset, offset + length));
+    offset += length;
+  }
+  return packets;
+}
 const asr = { configurations: [], env: {} } as unknown as AsrSetup;
 
 interface Captured {
@@ -36,23 +52,11 @@ interface Captured {
  * then runs it through the stream and returns what was segmented.
  */
 async function runPipeline(
-  pcm16kMono: Buffer,
   /** Milliseconds between packets. 0 feeds everything at once. */
   packetIntervalMs = 0,
   maxUtteranceMs = 120_000
 ): Promise<Captured[]> {
-  const encoder = new OpusScript(48000, 2, OpusScript.Application.AUDIO);
-  const frames = Math.floor(pcm16kMono.length / 2 / 320); // 20 ms at 16 kHz
-  const packets: Buffer[] = [];
-  for (let f = 0; f < frames; f++) {
-    const stereo = Buffer.alloc(960 * 2 * 2);
-    for (let i = 0; i < 960; i++) {
-      const sample = pcm16kMono.readInt16LE((f * 320 + Math.floor(i / 3)) * 2);
-      stereo.writeInt16LE(sample, i * 4);
-      stereo.writeInt16LE(sample, i * 4 + 2);
-    }
-    packets.push(encoder.encode(stereo, 960));
-  }
+  const packets = readOpusPackets(readFileSync(PACKETS));
 
   const captured: Captured[] = [];
   const audioStream = new PassThrough();
@@ -100,7 +104,7 @@ test("real speech survives decode, downsample and VAD as split segments", async 
   const { pcm, seconds } = readPcm(readFileSync(FIXTURE));
   assert.ok(seconds > 7, `fixture should be several seconds, got ${seconds}`);
 
-  const captured = await runPipeline(pcm);
+  const captured = await runPipeline();
 
   // The fixture is two sentences with 1.6 s of silence between them, which is
   // longer than the VAD's 1 s silence window — so it must produce two
@@ -134,10 +138,8 @@ test("segmentation does not depend on how fast the packets arrive", async () => 
   // used to be false: silence was measured with `Date.now()`, so a burst — a
   // reconnect catching up, or jitter — merged two sentences into one utterance,
   // and this test failed with 1 segment instead of 2.
-  const { pcm } = readPcm(readFileSync(FIXTURE));
-
-  const instant = await runPipeline(pcm);
-  const paced = await runPipeline(pcm, 8); // 8 ms between 20 ms packets
+  const instant = await runPipeline();
+  const paced = await runPipeline(8); // 8 ms between 20 ms packets
 
   assert.equal(instant.length, 2);
   assert.deepEqual(
@@ -164,9 +166,8 @@ test("speech that never pauses is split instead of growing without limit", async
   // Nothing in the fixture pauses for the 1.5 s the VAD wants, within a
   // sentence — so with a 1 s cap the first sentence alone must be split, and
   // no audio may be dropped on the way.
-  const { pcm } = readPcm(readFileSync(FIXTURE));
-  const capped = await runPipeline(pcm, 0, 1000);
-  const uncapped = await runPipeline(pcm);
+  const capped = await runPipeline(0, 1000);
+  const uncapped = await runPipeline();
 
   assert.ok(
     capped.length > uncapped.length,

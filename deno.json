@@ -1,0 +1,46 @@
+{
+  "tasks": {
+    "start": "deno run --env-file=.env --allow-all src/index.ts",
+    "dev": "deno run --env-file=.env --allow-all --watch src/index.ts",
+    "test": "deno test --allow-read --allow-write --allow-env --allow-ffi --allow-net src/*.test.ts",
+    "check": "deno check src/*.ts",
+    "verify": "deno run --allow-read --allow-env --allow-ffi --allow-net scripts/verify-runtime.ts",
+    "fixture": "deno run --env-file=.env --allow-all scripts/make-speech-fixture.ts"
+  },
+  "imports": {
+    "@discordjs/voice": "npm:@discordjs/voice@^0.19.2",
+    "@ricky0123/vad-node": "npm:@ricky0123/vad-node@^0.0.3",
+    "consola": "npm:consola@^3.4.0",
+    "discord.js": "npm:discord.js@^14.27.0",
+    "opus-decoder": "npm:opus-decoder@^0.7.7",
+    "vxasr": "npm:vxasr@0.1.0-next.8",
+    "vxasr/audio": "npm:/vxasr@0.1.0-next.8/audio",
+    "@types/node": "npm:@types/node@^24.0.0"
+  },
+  "//nodeModulesDir": [
+    "The Silero VAD is onnxruntime-node, a native Node-API module, and it needs",
+    "a real node_modules directory on disk. Deno will create one silently when",
+    "it notices; pinned here so the requirement is visible rather than implicit,",
+    "and so a future reader knows removing it breaks speech detection."
+  ],
+  "nodeModulesDir": "auto",
+  "compilerOptions": {
+    "lib": [
+      "deno.window",
+      "deno.ns",
+      "ES2023"
+    ],
+    "strict": true,
+    "types": [
+      "npm:@types/node@^24.0.0"
+    ]
+  },
+  "fmt": {
+    "lineWidth": 90
+  },
+  "exclude": [
+    "node_modules",
+    "testdata",
+    "usage.db"
+  ]
+}

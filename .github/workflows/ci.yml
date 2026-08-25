@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.5
+      # The VAD's native binary is fetched by a postinstall script; without this
+      # the suite fails on a missing binding rather than on a real defect.
+      - run: deno install --frozen --allow-scripts=npm:onnxruntime-node
+      - run: deno check src/*.ts
+      - run: deno task verify
+      - run: deno task test
