@@ -68,6 +68,7 @@ async function runPipeline(
     asr,
     () => {},
     undefined, // no usage ledger in this test
+    undefined, // no transcript collector in this test
     () => {
       const segment: Captured = { bytes: 0, finalized: false };
       captured.push(segment);
