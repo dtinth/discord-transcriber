@@ -15,7 +15,7 @@ A Discord bot that transcribes voice channel conversations using [vxasr](https:/
 
 ## Prerequisites
 
-- Node.js v24 or later
+- Deno 2.9 or later (this project does not run on Node)
 - Discord Bot Token
 - An API key for at least one vxasr provider (e.g. `DASHSCOPE_API_KEY` for Qwen)
 
@@ -24,8 +24,11 @@ A Discord bot that transcribes voice channel conversations using [vxasr](https:/
 1. Clone the repository
 2. Install dependencies:
    ```
-   pnpm install
+   deno install --frozen --allow-scripts=npm:onnxruntime-node
    ```
+   `--allow-scripts` is required: the voice-activity model is a native module
+   whose binary is fetched by a postinstall. Without it the bot starts, joins
+   the channel, and detects no speech.
 3. Create a `.env` file based on the example:
    ```
    cp .env.example .env
@@ -69,7 +72,7 @@ budget never stops anything — and nothing announces that, until the bill does.
 
 Start the bot:
 ```
-pnpm dev
+deno task dev
 ```
 
 In Discord, use the following commands:
@@ -79,8 +82,9 @@ In Discord, use the following commands:
 ## Development
 
 ```
-pnpm typecheck   # Type checking
-pnpm test        # Unit tests (node:test, no network, no credentials)
+deno task check    # Type checking
+deno task test     # Unit tests (no network, no credentials)
+deno task verify   # Prove this checkout can decode audio and load the VAD
 ```
 
 ## How It Works
