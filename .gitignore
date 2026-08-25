@@ -36,3 +36,6 @@ temp/
 # Cache
 .npm
 .pnpm-store/
+# Usage ledger (SQLite) — local spend records, never committed
+usage.db
+usage.db-*

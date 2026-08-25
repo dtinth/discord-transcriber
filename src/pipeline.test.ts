@@ -63,6 +63,7 @@ async function runPipeline(
     audioStream,
     asr,
     () => {},
+    undefined, // no usage ledger in this test
     () => {
       const segment: Captured = { bytes: 0, finalized: false };
       captured.push(segment);

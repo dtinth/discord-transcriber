@@ -273,3 +273,51 @@ test("an aborted job still releases the socket", async () => {
   );
   assert.deepEqual(log, ["close"]);
 });
+
+// A budget built from the returned result alone would under-count: the result
+// carries only the winning attempt's usage, so every failed attempt's spend
+// would be invisible. onAttemptFinished is what makes the ledger honest.
+test("every attempt reports its usage, including the ones that failed", async () => {
+  const timers = new FakeTimers();
+  const log: string[] = [];
+  const failing = scriptedProvider(log, "bad", (callbacks) => {
+    // The vendor billed for the audio it processed before erroring.
+    callbacks.onUsage?.([{ sku: "audio", unitPrice: 1, quantity: 4 }]);
+    queueMicrotask(() => callbacks.onError?.(new Error("boom")));
+    return {};
+  });
+  const succeeding = scriptedProvider(log, "good", (callbacks) => ({
+    onFinish: () => {
+      callbacks.onUsage?.([{ sku: "audio", unitPrice: 1, quantity: 1 }]);
+      callbacks.onFinal?.("saved");
+      callbacks.onEnd?.();
+    },
+  }));
+
+  const finished: Array<{ attempt: number; ok: boolean; cost: number }> = [];
+  const result = await timers.runUntil(
+    runTranscriptionJob({
+      recording: endedRecording(),
+      configurations: [definition("bad/mock", failing), definition("good/mock", succeeding)],
+      env: {},
+      onAttemptFinished: (info) =>
+        finished.push({
+          attempt: info.attempt,
+          ok: info.ok,
+          cost: info.usage.reduce((n, r) => n + r.unitPrice * r.quantity, 0),
+        }),
+      timers,
+    })
+  );
+
+  assert.deepEqual(finished, [
+    { attempt: 1, ok: false, cost: 4 },
+    { attempt: 2, ok: true, cost: 1 },
+  ]);
+
+  // The true spend is 5; the result alone would have claimed 1.
+  const billed = finished.reduce((n, f) => n + f.cost, 0);
+  const fromResult = result.usage.reduce((n, r) => n + r.unitPrice * r.quantity, 0);
+  assert.equal(billed, 5);
+  assert.equal(fromResult, 1);
+});

@@ -22,6 +22,8 @@
 - `src/throttled-message-updater.ts` - Discord message lifecycle; partial edits with 0.5 s debounce + 1.5 s throttle
 - `src/downsample.ts` - Streaming 48 kHz stereo → 16 kHz mono (3:1 averaging)
 - `src/fake-timers.ts` - Deterministic clock for tests
+- `src/usage-store.ts` - SQLite ledger: one row per **attempt**, and the totals the budget reads
+- `src/budget.ts` - Decides whether another utterance may start; pure, so it is testable without Discord
 - `src/transcription.ts` - Re-export shim
 
 ## Environment Setup
@@ -32,6 +34,7 @@ Required environment variables in `.env` file:
 - `ASR_CONFIGURATIONS` - (Optional) Comma-separated vxasr configuration ids in retry order
 - `SILENCE_DURATION` / `STALL_TIMEOUT_MS` / `RECEIVER_SILENCE_MS` - (Optional) Segmentation timings; see `.env.example`
 - `ASR_SESSION_REUSE` - (Optional) `0` disables qwen-omni connection reuse
+- `USAGE_DB` / `BUDGET_USD` / `BUDGET_PER_GUILD_USD` / `BUDGET_PERIOD` - (Optional) Cost ledger and spend caps; see `.env.example`
 - `LOG_LEVEL` - (Optional) Logging level (1=error, 2=warn, 3=log, 4=info, 5=debug)
 
 ## TypeScript Configuration
@@ -73,6 +76,14 @@ Required environment variables in `.env` file:
   - `node:test` with `node --experimental-transform-types --test` — no test framework dependency, Deno-friendly
   - `FakeTimers` (src/fake-timers.ts) drives all timing-sensitive tests deterministically
   - The vxasr `mock/mock` configuration gives a hermetic end-to-end path
+
+## Cost tracking and budget
+
+- Every **attempt** is written to SQLite (`node:sqlite`, built into Node and supported by Deno — no dependency), not every utterance. A failed attempt still spends money, and `TranscriptionResult` carries only the winning attempt's usage, so a ledger built from it under-counts
+- The budget is checked **before** an utterance opens a vendor session — the only moment refusing is free. The documented consequence: the cap can be overshot by the utterances already in flight, which cannot be avoided without knowing a turn's price in advance
+- A spent budget pauses transcription and says so once per session; the bot stays in the voice channel so `!stop` / `!transcribe` still behave normally. A new period releases it automatically
+- `!cost` reports the period's spend for the guild and overall
+- Deno needs `--allow-write` for the SQLite file (see `test:deno`)
 
 ## Code Style Guidelines
 

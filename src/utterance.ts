@@ -7,6 +7,19 @@ import { Recording } from "./recording.ts";
 import { ThrottledMessageUpdater } from "./throttled-message-updater.ts";
 import { runTranscriptionJob } from "./transcription-job.ts";
 
+/** Where an utterance reports what each attempt cost. */
+export interface UsageSink {
+  recordAttempt(info: {
+    speakerId: string;
+    configurationId: string;
+    attempt: number;
+    audioSeconds: number;
+    costUsd: number;
+    ok: boolean;
+    error?: string;
+  }): void;
+}
+
 /**
  * One speech segment: a growing {@link Recording}, a Discord message, and a
  * transcription job running against them.
@@ -27,7 +40,9 @@ export class Utterance {
     textChannel: TextBasedChannel,
     asr: AsrSetup,
     /** Groups this speaker's utterances for vendor session reuse. */
-    private clientId?: string
+    private clientId?: string,
+    /** Receives the cost of every attempt, successful or not. */
+    private usage?: UsageSink
   ) {
     this.updater = new ThrottledMessageUpdater(userId, textChannel);
     void this.runJob(userId, asr);
@@ -66,6 +81,19 @@ export class Utterance {
         signal: this.abort.signal,
         onPartial: (text) => {
           if (text.trim()) this.updater.setPartial(text.trim());
+        },
+        onAttemptFinished: ({ attempt, configurationId, usage, ok, error }) => {
+          // Recorded per attempt, so a retry's failed tries are billed to the
+          // ledger too — the job's return value only carries the winner's.
+          this.usage?.recordAttempt({
+            speakerId: userId,
+            configurationId,
+            attempt,
+            audioSeconds: this.recording.size / 32000,
+            costUsd: usage.reduce((sum, r) => sum + r.unitPrice * r.quantity, 0),
+            ok,
+            error,
+          });
         },
         onAttemptStart: (attempt, configurationId) => {
           logger.info(

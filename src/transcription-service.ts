@@ -1,21 +1,33 @@
 import { EndBehaviorType, VoiceConnection } from "@discordjs/voice";
 import type { TextBasedChannel } from "discord.js";
 import type { AsrSetup } from "./asr-setup.ts";
+import { budgetMessage, checkBudget, type BudgetLimits } from "./budget.ts";
 import config from "./config.ts";
 import logger from "./logger.ts";
 import { SpeakerRegistry } from "./speaker-registry.ts";
+import type { UsageStore } from "./usage-store.ts";
 import { UserAudioStream } from "./user-audio-stream.ts";
+
+export interface TranscriptionSessionOptions {
+  /** Who ran `!transcribe` — recorded against every row this session bills. */
+  requesterId: string | null;
+}
 
 export class TranscriptionService {
   /** One registry per transcription session, keyed by subscription id. */
   private sessions: Map<string, SpeakerRegistry> = new Map();
   private transcriptionChannels: Map<string, TextBasedChannel> = new Map();
 
-  constructor(private asr: AsrSetup) {}
+  constructor(
+    private asr: AsrSetup,
+    private usage?: UsageStore,
+    private limits?: BudgetLimits
+  ) {}
 
   createTranscriptionStream(
     connection: VoiceConnection,
-    textChannel: TextBasedChannel
+    textChannel: TextBasedChannel,
+    options: TranscriptionSessionOptions = { requesterId: null }
   ) {
     const receiver = connection.receiver;
     // Discord allows a user one voice connection per guild, so (guild, speaker)
@@ -37,8 +49,34 @@ export class TranscriptionService {
     const speakers = new SpeakerRegistry();
     this.sessions.set(subscriptionId, speakers);
 
+    const channelId = "id" in textChannel ? (textChannel.id as string) : null;
+    /** Said once per session, so a spent budget does not spam the channel. */
+    let budgetNoticeSent = false;
+
     receiver.speaking.on("start", (userId) => {
       logger.debug(`User ${userId} started speaking`);
+
+      // Checked before the utterance opens a vendor session — the only moment
+      // refusing is free. Stopping mid-flight would mean paying for audio the
+      // vendor already processed and discarding the transcript anyway.
+      if (this.usage && this.limits) {
+        const verdict = checkBudget(this.usage, this.limits, guildId);
+        if (!verdict.allowed) {
+          if (!budgetNoticeSent) {
+            budgetNoticeSent = true;
+            logger.warn(
+              `Budget reached (${verdict.scope}): $${verdict.spentUsd.toFixed(4)} ` +
+                `of $${verdict.limitUsd.toFixed(2)} — transcription paused`
+            );
+            if ("send" in textChannel) {
+              void textChannel
+                .send(budgetMessage(verdict))
+                .catch((error) => logger.error("Error sending budget notice:", error));
+            }
+          }
+          return;
+        }
+      }
 
       let audioStream: { destroy?: () => void } | undefined;
       try {
@@ -56,7 +94,23 @@ export class TranscriptionService {
             textChannel,
             audioStream,
             this.asr,
-            onEnd
+            onEnd,
+            this.usage && {
+              recordAttempt: (info) =>
+                this.usage!.record({
+                  at: Date.now(),
+                  guildId,
+                  channelId,
+                  speakerId: info.speakerId,
+                  requesterId: options.requesterId,
+                  configurationId: info.configurationId,
+                  attempt: info.attempt,
+                  audioSeconds: info.audioSeconds,
+                  costUsd: info.costUsd,
+                  ok: info.ok,
+                  error: info.error,
+                }),
+            }
           );
         });
       } catch (error) {

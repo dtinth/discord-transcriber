@@ -23,8 +23,32 @@ export default {
    */
   ASR_SESSION_REUSE: process.env.ASR_SESSION_REUSE !== "0",
 
+  /** SQLite file holding the usage ledger. */
+  USAGE_DB: process.env.USAGE_DB || "usage.db",
+
+  /**
+   * Spend cap across every guild, in USD, for {@link BUDGET_PERIOD}. 0 (the
+   * default) means no cap — the bot never refuses on cost.
+   */
+  BUDGET_USD: Number(process.env.BUDGET_USD ?? 0),
+
+  /**
+   * Optional per-guild cap, so one server cannot consume the whole budget.
+   * 0 disables it. Only meaningful when the bot serves more than one guild.
+   */
+  BUDGET_PER_GUILD_USD: Number(process.env.BUDGET_PER_GUILD_USD ?? 0),
+
+  /** Window the caps are measured over: `day`, `month`, or `total`. */
+  BUDGET_PERIOD: (process.env.BUDGET_PERIOD || "month") as
+    | "day"
+    | "month"
+    | "total",
+
   // Discord command prefix
   PREFIX: "!",
+
+  // Command that reports what has been spent this period
+  COST_COMMAND: "cost",
 
   // Command for starting transcription
   START_COMMAND: "transcribe",
