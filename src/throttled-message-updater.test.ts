@@ -5,6 +5,7 @@ import { FakeTimers, drainMicrotasks } from "./fake-timers.ts";
 import {
   DEBOUNCE_MS,
   DISCORD_MAX_CONTENT,
+  PLACEHOLDER,
   THROTTLE_MS,
   ThrottledMessageUpdater,
   splitForDiscord,
@@ -55,6 +56,24 @@ test("the placeholder is sent silent (no channel-wide notification)", async () =
   await drainMicrotasks();
 
   assert.deepEqual(fake.sendFlags, [MessageFlags.SuppressNotifications]);
+});
+
+// Discord notifies on message *create*, never on edit. So the mention must not
+// be in the message that is sent, only in the edits that follow — otherwise the
+// speaker is pinged once for every utterance they make.
+test("the first message carries no mention, and later edits do", async () => {
+  const timers = new FakeTimers();
+  const fake = fakeChannel(timers);
+  const updater = new ThrottledMessageUpdater("u", fake.channel, timers);
+  await drainMicrotasks();
+
+  const placeholder = fake.edits[0].content;
+  assert.equal(placeholder, PLACEHOLDER);
+  assert.ok(!placeholder.includes("<@"), "the sent message must not mention anyone");
+
+  await updater.finalize("the transcript");
+  await drainMicrotasks();
+  assert.equal(fake.edits.at(-1)?.content, "<@u>: the transcript");
 });
 
 test("a rapid-fire burst collapses into one edit after the debounce", async () => {
@@ -182,6 +201,12 @@ test("a transcript longer than Discord allows arrives as several messages", asyn
     .map((entry) => entry.content.replace(/^<@u>: /, ""))
     .join(" ");
   assert.equal(delivered, long, "the whole transcript must reach the channel");
+  // Continuations are sent, not edited, so a mention in one would ping the
+  // speaker — exactly what the mentionless placeholder exists to prevent.
+  assert.ok(
+    fake.sent.every((content) => !content.includes("<@")),
+    "continuation messages must not mention the speaker"
+  );
   assert.ok(
     fake.edits.every((entry) => entry.content.length <= DISCORD_MAX_CONTENT),
     "no message may exceed Discord's limit"

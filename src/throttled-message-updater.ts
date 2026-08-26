@@ -25,6 +25,13 @@ export const THROTTLE_MS = 1500;
 export const DISCORD_MAX_CONTENT = 2000;
 
 /**
+ * What the message says before there is anything to say.
+ *
+ * Mentionless on purpose — see the note where it is sent.
+ */
+export const PLACEHOLDER = "…";
+
+/**
  * Splits `text` into pieces that each fit within `limit`, preferring to break
  * at a space and then at any character, so a long transcript arrives as several
  * messages rather than not at all. Never drops content.
@@ -73,9 +80,14 @@ export class ThrottledMessageUpdater {
       "send" in channel
         ? channel
             .send({
-              content: this.render("*Listening...*"),
-              // Silent: a transcript should not ping the whole text channel
-              // every time someone speaks.
+              // Deliberately no mention, and this is the whole point of the
+              // placeholder: Discord dispatches notifications when a message is
+              // *created*, not when it is edited. A mention that arrives by a
+              // later edit therefore never pings the speaker, while a mention
+              // present at send time pings them for every utterance they make.
+              // `SuppressNotifications` alone is not enough — it silences the
+              // push, but a mention still marks the channel unread for them.
+              content: PLACEHOLDER,
               flags: MessageFlags.SuppressNotifications,
             })
             .catch((error) => {
@@ -220,7 +232,12 @@ export class ThrottledMessageUpdater {
       try {
         if ("send" in this.channel) {
           await this.channel.send({
-            content: this.render(part),
+            // No mention here either, and for the same reason as the
+            // placeholder: a continuation is *sent*, not edited, so a mention
+            // in it would ping the speaker — the notification the first message
+            // was carefully arranged to avoid. The speaker is already named by
+            // the message this continues, directly above it.
+            content: part,
             flags: MessageFlags.SuppressNotifications,
           });
         }
