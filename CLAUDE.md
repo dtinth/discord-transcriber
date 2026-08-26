@@ -74,7 +74,8 @@ Required environment variables in `.env` file:
   - Configurable silence duration and activation thresholds
 
 - **Message Handling**:
-  - Creates placeholder "*Listening...*" messages immediately
+  - Creates a placeholder message immediately, containing **no mention** — just `…`. Discord dispatches notifications when a message is *created*, never when it is edited, so the speaker's mention is added by the first edit and never pings them. `SuppressNotifications` alone is not enough: it silences the push but a mention still marks the channel unread for the person mentioned
+  - Continuation messages for an over-long transcript carry no mention either — they are *sent*, so a mention in one would ping
   - Live partial text with 0.5 s debounce + 1.5 s throttle (Discord edit rate limits; qwen-omni rapid-fires partials at the end)
   - All Discord operations for one message are serialized through one promise chain
   - Final text bypasses debounce/throttle
