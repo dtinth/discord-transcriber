@@ -9,6 +9,7 @@ services:
   transcriber:
     image: ghcr.io/dtinth/discord-transcriber:latest
     container_name: discord-transcriber
+    pull_policy: always
     restart: unless-stopped
 
     environment:
