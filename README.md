@@ -17,7 +17,7 @@ A Discord bot that transcribes voice channel conversations using [vxasr](https:/
 
 - Deno 2.9 or later (this project does not run on Node)
 - Discord Bot Token
-- An API key for at least one vxasr provider (e.g. `DASHSCOPE_API_KEY` for Qwen)
+- An API key for at least one vxasr provider (`OPENROUTER_API_KEY` for the default model)
 
 ## Setup
 
@@ -43,13 +43,12 @@ A Discord bot that transcribes voice channel conversations using [vxasr](https:/
    ```
    ASR_CONFIGURATIONS=qwen-omni/qwen3.5-omni-flash-realtime-2026-03-15,qwen/qwen3-asr-flash-realtime-2026-02-10
    ```
-6. Configure Privileged Intents in the Discord Developer Portal:
-   - Go to https://discord.com/developers/applications
-   - Select your bot application
-   - Go to the "Bot" section
-   - Under "Privileged Gateway Intents", enable:
-     - MESSAGE CONTENT INTENT
-   - Save changes
+6. Invite the bot with the `bot` **and** `applications.commands` scopes.
+   Without the second scope the slash commands cannot be registered, and
+   `/transcriber` never appears when somebody types `/`.
+
+   **No privileged intent is needed.** The bot is driven by slash commands, so
+   it never asks to read what people write. Leave MESSAGE CONTENT INTENT off.
 
 ## Deploying with Docker
 
@@ -57,7 +56,7 @@ Images are published to `ghcr.io/dtinth/discord-transcriber` for `linux/amd64`
 and `linux/arm64` on every push to `main`.
 
 ```bash
-cp .env.example .env    # fill in DISCORD_TOKEN and DASHSCOPE_API_KEY
+cp .env.example .env    # fill in DISCORD_TOKEN and OPENROUTER_API_KEY
 docker compose up -d
 docker compose logs -f
 ```
@@ -76,8 +75,11 @@ deno task dev
 ```
 
 In Discord, use the following commands:
-- `!transcribe` - Start transcribing the voice channel you're in
-- `!stop` - Stop transcription
+- `/transcriber start` - Start transcribing the voice channel you're in
+- `/transcriber stop` - Stop transcribing and upload the transcript as CSV
+- `/transcriber usage` - How much audio this server has transcribed (private reply)
+
+The commands are registered globally when the bot logs in.
 
 ## Development
 
@@ -104,7 +106,7 @@ deno task verify   # Prove this checkout can decode audio and load the VAD
 - The recording buffer owns the audio; sessions only read it through a cursor, so no retry ever loses sound
 - Replay pacing is per provider: a provider whose vxasr metadata declares `supportsFastDump` gets the backlog immediately, others get realtime pacing
 - Uses the Silero VAD model with a hysteresis pattern (separate activation/deactivation thresholds)
-- Opus decoding uses opusscript (WASM) — no native compilation
+- Opus decoding uses `opus-decoder` (pure WASM) — no native compilation
 - Uses consola for structured logging with configurable verbosity levels
 
 ## License

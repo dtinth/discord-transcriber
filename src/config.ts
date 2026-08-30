@@ -44,18 +44,6 @@ export default {
     | "month"
     | "total",
 
-  // Discord command prefix
-  PREFIX: "!",
-
-  // Command that reports what has been spent this period
-  COST_COMMAND: "cost",
-
-  // Command for starting transcription
-  START_COMMAND: "transcribe",
-
-  // Command for stopping transcription
-  STOP_COMMAND: "stop",
-
   // Logging level (1=error, 2=warn, 3=log, 4=info, 5=debug)
   LOG_LEVEL: intEnv("LOG_LEVEL", 4),
 
