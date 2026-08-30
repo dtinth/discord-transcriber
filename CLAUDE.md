@@ -36,7 +36,8 @@
 
 Required environment variables in `.env` file:
 - `DISCORD_TOKEN` - Discord bot token
-- `DASHSCOPE_API_KEY` - Alibaba Cloud DashScope key (for the default qwen-omni configuration)
+- `OPENROUTER_API_KEY` - OpenRouter key, required by the **default** configuration `openrouter/microsoft/mai-transcribe-1.5`
+- `DASHSCOPE_API_KEY` - Alibaba Cloud DashScope key; needed only if `ASR_CONFIGURATIONS` names a qwen / qwen-omni model
 - `ASR_CONFIGURATIONS` - (Optional) Comma-separated vxasr configuration ids in retry order
 - `SILENCE_DURATION` / `STALL_TIMEOUT_MS` / `RECEIVER_SILENCE_MS` - (Optional) Segmentation timings; see `.env.example`
 - `ASR_SESSION_REUSE` - (Optional) `0` disables qwen-omni connection reuse
@@ -55,7 +56,7 @@ Required environment variables in `.env` file:
 ## Important Implementation Details
 
 - **Transcription (vxasr)**:
-  - Uses [vxasr](https://github.com/dtinth/vxbeamer/tree/main/packages/vxasr) (`0.1.0-next` line) for multi-provider streaming ASR
+  - Uses [vxasr](https://github.com/dtinth/vxbeamer/tree/main/packages/vxasr) `0.1.0` for multi-provider streaming ASR
   - The `Recording` owns each utterance's audio; sessions read through a cursor, so a failed session loses nothing
   - The paced feeder starts streaming while the person is still speaking — a streaming provider (qwen) shows live partials during speech; qwen-omni streams its transcript after `finish()`
   - Retry replays the whole recording: fast-dump when the configuration's `supportsFastDump` metadata says so, realtime pacing otherwise
