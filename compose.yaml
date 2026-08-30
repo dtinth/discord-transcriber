@@ -41,11 +41,22 @@ services:
       HTTP_HOST: 0.0.0.0
       HTTP_PORT: 3000
 
-    # Loopback only: the response names every guild the bot transcribes for.
-    # Read it with `curl localhost:3000/stats` before a redeploy, and check
-    # `busy` — true means somebody is mid-sentence and a restart loses it.
-    ports:
-      - "127.0.0.1:${HTTP_PORT:-3000}:3000"
+    # The stats server, documented but NOT published to the host: the response
+    # names every guild the bot transcribes for, so it stays on the compose
+    # network where other containers (a reverse proxy, a monitor) can reach it
+    # at http://transcriber:3000.
+    #
+    # To read it from the host, either add your own `ports:` mapping or ask the
+    # running container, which needs nothing installed — `deno eval` runs with
+    # full permissions and the image already has deno:
+    #
+    #   docker compose exec transcriber \
+    #     deno eval 'console.log(await (await fetch("http://localhost:3000/stats")).text())'
+    #
+    # Check `busy` before a redeploy: true means somebody is mid-sentence, or a
+    # transcript is still coming back, and a restart loses it.
+    expose:
+      - "3000"
 
     volumes:
       # The spend ledger. **Not optional.** Without it every redeploy starts the

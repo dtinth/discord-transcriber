@@ -90,6 +90,16 @@ curl localhost:3000/stats
 curl localhost:3000/healthz
 ```
 
+Under Docker the port is **exposed, not published** — the response names every
+guild the bot transcribes for, so it stays on the compose network. Other
+containers reach it at `http://transcriber:3000`. To read it from the host,
+add a `ports:` mapping of your own, or ask the running container:
+
+```bash
+docker compose exec transcriber \
+  deno eval 'console.log(await (await fetch("http://localhost:3000/stats")).text())'
+```
+
 ```json
 {
   "startedAt": "2026-08-30T12:00:00.000Z",

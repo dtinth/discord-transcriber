@@ -120,7 +120,8 @@ Required environment variables in `.env` file:
 - `busy` is the field that answers the question — true when any session has a speaker mid-utterance or an utterance still at the vendor. `activeSessions` alone would block a redeploy for sessions that are merely *open*, which is most of them
 - **Elysia's `listen()` throws on Deno.** Deno loads Elysia's WebStandard adapter, whose `listen` is a stub that raises "WebStandard does not support listen". The supported path is `Deno.serve(..., app.fetch)`, which is what `startStatsServer` does
 - **Tests must use a realistic host in the request URL.** Elysia finds the path with `indexOf("/", 11)`, so `http://x/stats` puts the path before that offset and every route 404s. A real request always carries a real host, so this is a test-only trap — `http://localhost/stats` is fine
-- Binding is loopback by default because the response names every guild the bot transcribes for. In Docker `HTTP_HOST` must be `0.0.0.0` for the published port to reach it; `compose.yaml` publishes to `127.0.0.1` on the host instead
+- Binding is loopback by default because the response names every guild the bot transcribes for. In Docker `HTTP_HOST` must be `0.0.0.0`, or nothing outside the container can reach it at all
+- **`compose.yaml` uses `expose`, not `ports`.** The port is documented for other containers on the network (`http://transcriber:3000`) and is deliberately not published to the host, so the guild list is not one `curl` away from anything that can reach the VPS. Reading it from the host is then `docker compose exec transcriber deno eval '…fetch…'` — which needs nothing installed, because `deno eval` runs with full permissions and deno is the image
 
 ## Idle sessions
 
