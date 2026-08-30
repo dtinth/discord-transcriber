@@ -202,6 +202,26 @@ export class TranscriptionService {
     });
   }
 
+  /**
+   * What a session currently has in flight.
+   *
+   * `speakers` are people whose audio is being segmented right now;
+   * `pendingUtterances` are utterances already sent to the vendor and still
+   * waiting for a transcript. Both must be zero before a restart is free —
+   * anything in either column is audio that a restart would throw away.
+   */
+  sessionStats(subscriptionId: string): {
+    speakers: number;
+    pendingUtterances: number;
+    transcribed: number;
+  } {
+    return {
+      speakers: this.sessions.get(subscriptionId)?.size ?? 0,
+      pendingUtterances: this.pending.get(subscriptionId)?.size ?? 0,
+      transcribed: this.transcripts.get(subscriptionId)?.size ?? 0,
+    };
+  }
+
   stopTranscription(subscriptionId: string) {
     const speakers = this.sessions.get(subscriptionId);
     if (speakers) {

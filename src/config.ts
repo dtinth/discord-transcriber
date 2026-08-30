@@ -50,6 +50,23 @@ export default {
     | "month"
     | "total",
 
+  /**
+   * Port for the stats HTTP server. 0 disables it.
+   *
+   * It exists to answer one question before a redeploy: is anybody mid-session
+   * right now? Restarting drops every voice connection and abandons whatever
+   * is still at the vendor, and from outside the process there is no way to
+   * tell an idle bot from a busy one.
+   */
+  HTTP_PORT: intEnv("HTTP_PORT", 3000),
+
+  /**
+   * Address the stats server binds to. Loopback by default: the response names
+   * every guild the bot is transcribing for, which is nobody else's business.
+   * Set 0.0.0.0 only behind something that controls who can reach it.
+   */
+  HTTP_HOST: process.env.HTTP_HOST || "127.0.0.1",
+
   // Logging level (1=error, 2=warn, 3=log, 4=info, 5=debug)
   LOG_LEVEL: intEnv("LOG_LEVEL", 4),
 

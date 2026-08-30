@@ -15,7 +15,8 @@
     "opus-decoder": "npm:opus-decoder@^0.7.7",
     "vxasr": "npm:vxasr@^0.1.0",
     "vxasr/audio": "npm:/vxasr@^0.1.0/audio",
-    "@types/node": "npm:@types/node@^24.0.0"
+    "@types/node": "npm:@types/node@^24.0.0",
+    "elysia": "npm:elysia@^1.4.30"
   },
   "//nodeModulesDir": [
     "The Silero VAD is onnxruntime-node, a native Node-API module, and it needs",

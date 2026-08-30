@@ -113,6 +113,20 @@ Required environment variables in `.env` file:
 - The invite needs the `applications.commands` scope, or registration fails and the command never appears
 - There is no backward compatibility with the `!` prefix. It was removed deliberately: keeping it would keep the privileged intent, so we would pay the cost of prefixes and get none of the benefit
 
+## Stats HTTP server
+
+- `src/http-server.ts` serves `GET /healthz` and `GET /stats` on `HTTP_PORT` (default 3000), bound to `HTTP_HOST` (default `127.0.0.1`)
+- **It exists to time a redeploy.** A restart drops every voice connection and abandons whatever is still at the vendor, and from outside the process an idle bot and a busy one look identical
+- `busy` is the field that answers the question — true when any session has a speaker mid-utterance or an utterance still at the vendor. `activeSessions` alone would block a redeploy for sessions that are merely *open*, which is most of them
+- **Elysia's `listen()` throws on Deno.** Deno loads Elysia's WebStandard adapter, whose `listen` is a stub that raises "WebStandard does not support listen". The supported path is `Deno.serve(..., app.fetch)`, which is what `startStatsServer` does
+- **Tests must use a realistic host in the request URL.** Elysia finds the path with `indexOf("/", 11)`, so `http://x/stats` puts the path before that offset and every route 404s. A real request always carries a real host, so this is a test-only trap — `http://localhost/stats` is fine
+- Binding is loopback by default because the response names every guild the bot transcribes for. In Docker `HTTP_HOST` must be `0.0.0.0` for the published port to reach it; `compose.yaml` publishes to `127.0.0.1` on the host instead
+
+## The bot does not leave an empty channel
+
+- There is **no** auto-disconnect. The only voice handler is `VoiceConnectionStatus.Disconnected`, which reacts to *being* disconnected (kicked, moved, network), not to being alone. There is no `voiceStateUpdate` listener and no idle timer
+- So a session stays open until somebody runs `/transcriber stop`. It costs nothing — no audio means no vendor calls — but it holds the guild's slot, so `/transcriber start` answers "already active", and it inflates `activeSessions` in `/stats` with sessions nobody is using
+
 ## Code Style Guidelines
 
 - Use TypeScript for type safety
