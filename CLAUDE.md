@@ -29,7 +29,7 @@
 - `src/usage-store.ts` - SQLite ledger: one row per **attempt**, and the totals the budget reads
 - `src/budget.ts` - Decides whether another utterance may start; pure, so it is testable without Discord
 - `src/session-transcript.ts` - Collects a session's utterances and renders the CSV (RFC 4180 escaping)
-- `src/pending-utterances.ts` - Counts utterances still at the vendor, so `!stop` knows when the file is complete
+- `src/pending-utterances.ts` - Counts utterances still at the vendor, so `/transcriber stop` knows when the file is complete
 - `src/transcription.ts` - Re-export shim
 
 ## Environment Setup
@@ -91,18 +91,27 @@ Required environment variables in `.env` file:
 
 - Every **attempt** is written to SQLite (`node:sqlite`, built into Node and supported by Deno — no dependency), not every utterance. A failed attempt still spends money, and `TranscriptionResult` carries only the winning attempt's usage, so a ledger built from it under-counts
 - The budget is checked **before** an utterance opens a vendor session — the only moment refusing is free. The documented consequence: the cap can be overshot by the utterances already in flight, which cannot be avoided without knowing a turn's price in advance
-- A spent budget pauses transcription and says so once per session; the bot stays in the voice channel so `!stop` / `!transcribe` still behave normally. A new period releases it automatically
-- `!cost` reports the period's spend for the guild and overall
+- A spent budget pauses transcription and says so once per session; the bot stays in the voice channel so `/transcriber stop` / `start` still behave normally. A new period releases it automatically
+- `/transcriber usage` reports the **audio seconds** the guild transcribed this period — deliberately no money. The cost stays in the ledger, where the budget reads it; a channel is told what it transcribed, not what the operator pays
 - Deno needs `--allow-write` for the SQLite file (see `test:deno`)
 
-## Session transcript (`!stop`)
+## Session transcript (`/transcriber stop`)
 
-- `!stop` uploads the session as CSV: `started_at, ended_at, message_id, speaker_id, speaker_name, text`, ordered by when people spoke (utterances complete out of order when speakers overlap or a retry happens)
+- `/transcriber stop` uploads the session as CSV: `started_at, ended_at, message_id, speaker_id, speaker_name, text`, ordered by when people spoke (utterances complete out of order when speakers overlap or a retry happens)
 - **It waits, briefly, before sending.** The last utterance is nearly always still at the vendor when somebody stops the bot, and that is usually the part they want. Bounded by `DRAIN_TIMEOUT_MS` so a stalled vendor delays the file rather than preventing it; anything still missing is logged, not hidden
 - The voice connection is destroyed *after* the file is built — tearing it down first aborts the very utterances the file would be missing
 - An utterance that failed every attempt becomes a row with empty text: the transcript should show that something was said there and we do not have it. Silent utterances (deleted messages) are left out
 - Escaping is RFC 4180 and tested by parsing the output back, not by matching the string — transcripts contain commas, quotes and newlines, and naive writing corrupts the file at the first quote
 - Speaker names come from the guild cache and fall back to the id; a fetch here would put a network round trip in the transcription path
+
+## Commands (slash, not prefix)
+
+- `/transcriber start`, `/transcriber stop`, `/transcriber usage` — one command with three subcommands, defined in `src/commands.ts`, registered globally on `ClientReady`
+- **The bot requests no privileged intent.** Its intents are `Guilds` and `GuildVoiceStates` only. Interactions carry the command in the payload, so nothing needs to read message text — the old `!` prefix was the *sole* reason `MessageContent` was requested, read by two lines that parsed a command name. Below 100 servers that intent is a checkbox; at 100 it becomes a Discord review of the application, at the worst possible moment
+- **`stop` must `deferReply()` before draining.** An interaction has to be acknowledged within 3 s, and the drain waits up to `DRAIN_TIMEOUT_MS` (20 s) for the last transcripts. Replying directly would expire the interaction and lose the very file the command exists to produce; deferring gives 15 minutes, and `editReply` carries the attachment
+- `usage` replies ephemerally — a server's own usage is not news for the channel
+- The invite needs the `applications.commands` scope, or registration fails and the command never appears
+- There is no backward compatibility with the `!` prefix. It was removed deliberately: keeping it would keep the privileged intent, so we would pay the cost of prefixes and get none of the benefit
 
 ## Code Style Guidelines
 

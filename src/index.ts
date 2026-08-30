@@ -1,8 +1,23 @@
 import { joinVoiceChannel, VoiceConnectionStatus } from "@discordjs/voice";
-import { Client, Events, GatewayIntentBits } from "discord.js";
+import {
+  Client,
+  Events,
+  GatewayIntentBits,
+  GuildMember,
+  MessageFlags,
+  type ChatInputCommandInteraction,
+} from "discord.js";
 import { loadAsrSetup, type AsrSetup } from "./asr-setup.ts";
 import type { BudgetLimits } from "./budget.ts";
+import {
+  buildUsageReply,
+  START_SUBCOMMAND,
+  STOP_SUBCOMMAND,
+  transcriberCommand,
+  USAGE_SUBCOMMAND,
+} from "./commands.ts";
 import config from "./config.ts";
+import logger from "./logger.ts";
 import { TranscriptionService } from "./transcription.ts";
 import { UsageStore } from "./usage-store.ts";
 
@@ -27,33 +42,16 @@ try {
   process.exit(1);
 }
 
-// Create a new Discord client
+// No privileged intents. The bot is driven entirely by slash commands, which
+// arrive as interactions and need no intent at all, so it never asks to read
+// what anybody writes. `Guilds` keeps the guild and channel caches; the voice
+// intent is how the bot sees which channel the caller is sitting in.
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent, // Privileged intent - must be enabled in Developer Portal
-    GatewayIntentBits.GuildVoiceStates,
-  ],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
 });
 
-// Handle privileged intents error
 client.on("error", (error) => {
-  if (error.message.includes("disallowed intents")) {
-    console.error("\n\n===== INTENT ERROR =====");
-    console.error("This bot requires privileged intents to function properly.");
-    console.error("Please enable these intents in the Discord Developer Portal:");
-    console.error("1. Go to https://discord.com/developers/applications");
-    console.error("2. Select your application");
-    console.error("3. Go to the 'Bot' section");
-    console.error("4. Under 'Privileged Gateway Intents', enable:");
-    console.error("   - MESSAGE CONTENT INTENT");
-    console.error("5. Save changes and restart the bot");
-    console.error("========================\n\n");
-    process.exit(1);
-  } else {
-    console.error("Discord client error:", error);
-  }
+  console.error("Discord client error:", error);
 });
 
 // Initialize transcription service
@@ -86,132 +84,194 @@ const transcriptionService = new TranscriptionService(
 // Map to track active transcription sessions
 const activeTranscriptions = new Map();
 
-client.once(Events.ClientReady, () => {
-  console.log(`Logged in as ${client.user?.tag}`);
+client.once(Events.ClientReady, async (ready) => {
+  console.log(`Logged in as ${ready.user.tag}`);
+  try {
+    await ready.application.commands.set([transcriberCommand.toJSON()]);
+    console.log("Registered /transcriber (start, stop, usage)");
+  } catch (error) {
+    // Not fatal: a previous registration may still be live, and the bot is
+    // useless but harmless without one. It must be loud, because the only
+    // other symptom is a command that never appears when somebody types "/".
+    console.error(
+      "Could not register the slash commands. Check that the bot was invited " +
+        "with the applications.commands scope:",
+      error
+    );
+  }
 });
 
-client.on(Events.MessageCreate, async (message) => {
-  // Ignore messages from bots
-  if (message.author.bot) return;
+/** `/transcriber start` — join the caller's voice channel and listen. */
+async function handleStart(interaction: ChatInputCommandInteraction) {
+  const member =
+    interaction.member instanceof GuildMember
+      ? interaction.member
+      : await interaction.guild!.members.fetch(interaction.user.id);
 
-  // Check if message starts with prefix
-  if (!message.content.startsWith(config.PREFIX)) return;
+  const voiceChannel = member.voice.channel;
+  if (!voiceChannel) {
+    await interaction.reply({
+      content: "You need to be in a voice channel to use this command.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
 
-  const args = message.content.slice(config.PREFIX.length).trim().split(/ +/);
-  const command = args.shift()?.toLowerCase();
+  if (activeTranscriptions.has(interaction.guildId)) {
+    await interaction.reply({
+      content: "Transcription is already active in this server.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
 
-  if (command === config.START_COMMAND) {
-    // Check if user is in a voice channel
-    const voiceChannel = message.member?.voice.channel;
-    if (!voiceChannel) {
-      message.reply("You need to be in a voice channel to use this command.");
-      return;
-    }
+  if (!interaction.channel?.isTextBased()) {
+    await interaction.reply({
+      content: "Command must be used in a text channel.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
 
-    // Check if bot already has an active transcription in this guild
-    if (activeTranscriptions.has(message.guildId)) {
-      message.reply("Transcription is already active in this server.");
-      return;
-    }
+  // Joining takes long enough to risk the 3 s acknowledgement deadline.
+  await interaction.deferReply();
 
-    try {
-      // Join the voice channel
-      const connection = joinVoiceChannel({
-        channelId: voiceChannel.id,
-        guildId: voiceChannel.guild.id,
-        adapterCreator: voiceChannel.guild.voiceAdapterCreator,
-      });
+  try {
+    const connection = joinVoiceChannel({
+      channelId: voiceChannel.id,
+      guildId: voiceChannel.guild.id,
+      adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+    });
 
-      // Set up transcription with text channel
-      // Ensure we're working with a text channel
-      if (!message.channel.isTextBased()) {
-        message.reply("Command must be used in a text channel.");
-        return;
-      }
-
-      const subscription = transcriptionService.createTranscriptionStream(
-        connection,
-        message.channel,
-        { requesterId: message.author.id }
-      );
-
-      // Store the active transcription
-      activeTranscriptions.set(message.guildId, {
-        connection,
-        subscription,
-        textChannel: message.channel,
-      });
-
-      // Handle disconnection
-      connection.on(VoiceConnectionStatus.Disconnected, () => {
-        transcriptionService.stopTranscription(subscription);
-        activeTranscriptions.delete(message.guildId);
-      });
-
-      message.reply(
-        "Voice transcription started. I will transcribe all spoken text in this channel."
-      );
-    } catch (error) {
-      console.error("Error joining voice channel:", error);
-      message.reply("There was an error joining your voice channel.");
-    }
-  } else if (command === config.COST_COMMAND) {
-    const summary = usageStore.summary(config.BUDGET_PERIOD, message.guildId ?? undefined);
-    const overall = usageStore.spentThisPeriod(config.BUDGET_PERIOD);
-    const cap =
-      config.BUDGET_USD > 0
-        ? ` of $${config.BUDGET_USD.toFixed(2)}`
-        : " (no limit set)";
-    message.reply(
-      `This server this ${config.BUDGET_PERIOD}: **$${summary.totalUsd.toFixed(4)}** — ` +
-        `${Math.round(summary.audioSeconds)}s of audio, ${summary.attempts} attempts` +
-        (summary.failedAttempts > 0 ? ` (${summary.failedAttempts} failed)` : "") +
-        `.\nAll servers: **$${overall.toFixed(4)}**${cap}.`
+    const subscription = transcriptionService.createTranscriptionStream(
+      connection,
+      interaction.channel,
+      { requesterId: interaction.user.id }
     );
-  } else if (command === config.STOP_COMMAND) {
-    // Check if there's an active transcription
-    const transcription = activeTranscriptions.get(message.guildId);
-    if (!transcription) {
-      message.reply("There is no active transcription to stop.");
-      return;
+
+    activeTranscriptions.set(interaction.guildId, {
+      connection,
+      subscription,
+      textChannel: interaction.channel,
+    });
+
+    connection.on(VoiceConnectionStatus.Disconnected, () => {
+      transcriptionService.stopTranscription(subscription);
+      activeTranscriptions.delete(interaction.guildId);
+    });
+
+    await interaction.editReply(
+      "Voice transcription started. I will transcribe all spoken text in this channel."
+    );
+  } catch (error) {
+    console.error("Error joining voice channel:", error);
+    await interaction.editReply("There was an error joining your voice channel.");
+  }
+}
+
+/** `/transcriber stop` — drain, upload the transcript, then leave. */
+async function handleStop(interaction: ChatInputCommandInteraction) {
+  const transcription = activeTranscriptions.get(interaction.guildId);
+  if (!transcription) {
+    await interaction.reply({
+      content: "There is no active transcription to stop.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Remove it from the active map first, so a second `/transcriber stop`
+  // cannot start a second drain while this one is still waiting on the vendor.
+  activeTranscriptions.delete(interaction.guildId);
+
+  // Mandatory, not defensive: the drain below waits up to 20 s for the last
+  // transcripts, and an interaction must be acknowledged within 3 s. Replying
+  // straight away would lose the very file this command exists to produce.
+  // Deferring buys 15 minutes, which the 20 s drain fits inside comfortably.
+  await interaction.deferReply();
+
+  let attachment = null;
+  try {
+    attachment = await transcriptionService.finishAndBuildTranscript(
+      transcription.subscription,
+      () => {
+        void interaction
+          .editReply("*Stopping — waiting for the last transcripts…*")
+          .catch(() => {});
+      }
+    );
+  } catch (error) {
+    console.error("Error building the session transcript:", error);
+  }
+
+  // The connection is destroyed only after the transcript is built: tearing
+  // it down first would abort the utterances still being transcribed, which
+  // are exactly the ones the file would otherwise be missing.
+  transcriptionService.stopTranscription(transcription.subscription);
+  transcription.connection.destroy();
+
+  if (attachment) {
+    await interaction
+      .editReply({ content: "Voice transcription stopped.", files: [attachment] })
+      .catch(async (error) => {
+        console.error("Error uploading the transcript:", error);
+        await interaction
+          .editReply(
+            "Voice transcription stopped, but the transcript could not be uploaded."
+          )
+          .catch(() => {});
+      });
+  } else {
+    await interaction.editReply("Voice transcription stopped. Nothing was transcribed.");
+  }
+}
+
+/** `/transcriber usage` — how much audio this server has transcribed. */
+async function handleUsage(interaction: ChatInputCommandInteraction) {
+  const summary = usageStore.summary(
+    config.BUDGET_PERIOD,
+    interaction.guildId ?? undefined
+  );
+  // Ephemeral: a question about this server's own usage is not news for the
+  // channel, and the answer is the same however often it is asked.
+  await interaction.reply({
+    content: buildUsageReply(summary, config.BUDGET_PERIOD),
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName !== transcriberCommand.name) return;
+
+  // Every subcommand needs a guild: two of them act on a voice channel and the
+  // third reports that guild's usage.
+  if (!interaction.inGuild()) {
+    await interaction.reply({
+      content: "This command only works in a server.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const subcommand = interaction.options.getSubcommand();
+  try {
+    if (subcommand === START_SUBCOMMAND) {
+      await handleStart(interaction);
+    } else if (subcommand === STOP_SUBCOMMAND) {
+      await handleStop(interaction);
+    } else if (subcommand === USAGE_SUBCOMMAND) {
+      await handleUsage(interaction);
     }
-
-    // Remove it from the active map first, so a second `!stop` cannot start a
-    // second drain while this one is still waiting on the vendor.
-    activeTranscriptions.delete(message.guildId);
-
-    let attachment = null;
-    try {
-      attachment = await transcriptionService.finishAndBuildTranscript(
-        transcription.subscription,
-        () => {
-          void message.channel
-            .send("*Stopping — waiting for the last transcripts…*")
-            .catch(() => {});
-        }
-      );
-    } catch (error) {
-      console.error("Error building the session transcript:", error);
-    }
-
-    // The connection is destroyed only after the transcript is built: tearing
-    // it down first would abort the utterances still being transcribed, which
-    // are exactly the ones the file would otherwise be missing.
-    transcriptionService.stopTranscription(transcription.subscription);
-    transcription.connection.destroy();
-
-    if (attachment) {
-      await message
-        .reply({ content: "Voice transcription stopped.", files: [attachment] })
-        .catch(async (error) => {
-          console.error("Error uploading the transcript:", error);
-          await message
-            .reply("Voice transcription stopped, but the transcript could not be uploaded.")
-            .catch(() => {});
-        });
-    } else {
-      message.reply("Voice transcription stopped. Nothing was transcribed.");
-    }
+  } catch (error) {
+    // An unhandled throw here leaves the caller looking at a spinner until
+    // Discord times it out, with nothing said about why.
+    logger.error(`Error handling /transcriber ${subcommand}:`, error);
+    const message = "Something went wrong while running that command.";
+    await (interaction.deferred || interaction.replied
+      ? interaction.editReply(message)
+      : interaction.reply({ content: message, flags: MessageFlags.Ephemeral })
+    ).catch(() => {});
   }
 });
 
@@ -219,20 +279,6 @@ client.on(Events.MessageCreate, async (message) => {
 try {
   await client.login(config.DISCORD_TOKEN);
 } catch (error: unknown) {
-  if (error instanceof Error && error.message.includes("disallowed intents")) {
-    console.error("\n\n===== INTENT ERROR =====");
-    console.error("This bot requires privileged intents to function properly.");
-    console.error("Please enable these intents in the Discord Developer Portal:");
-    console.error("1. Go to https://discord.com/developers/applications");
-    console.error("2. Select your application");
-    console.error("3. Go to the 'Bot' section");
-    console.error("4. Under 'Privileged Gateway Intents', enable:");
-    console.error("   - MESSAGE CONTENT INTENT");
-    console.error("5. Save changes and restart the bot");
-    console.error("========================\n\n");
-    process.exit(1);
-  } else {
-    console.error("Failed to log in to Discord:", error);
-    process.exit(1);
-  }
+  console.error("Failed to log in to Discord:", error);
+  process.exit(1);
 }
