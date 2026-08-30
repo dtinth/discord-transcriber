@@ -7,7 +7,7 @@
     "npm:consola@^3.4.0": "3.4.2",
     "npm:discord.js@^14.27.0": "14.27.0",
     "npm:opus-decoder@~0.7.7": "0.7.11",
-    "npm:vxasr@0.1.0-next.8": "0.1.0-next.8"
+    "npm:vxasr@0.1": "0.1.0"
   },
   "npm": {
     "@discordjs/builders@1.14.1": {
@@ -583,8 +583,8 @@
     "undici@6.28.0": {
       "integrity": "sha512-LIY910g9TI13YS95lrMFrs8Rm/u/irgHeTWoKCoteeJ04CUJ92eEfj0rVn+7VKMPBpUPiUoBKfhNyLI23EE/KA=="
     },
-    "vxasr@0.1.0-next.8": {
-      "integrity": "sha512-f8s5wxEWBFXERtjTsDHtTLc5T01wyMdwUYJxOau6EtCtJ4bE+4bXjliPo756kw3YysC79KLnVuVGbAFDeQu9Fg==",
+    "vxasr@0.1.0": {
+      "integrity": "sha512-v6IZjLxIQH/HcKyB0PxB8p6xftCnZ4pLlmLfIIzYF3J9g++x7NM+MzpOnaWiEOLv4IbatDsSXiclXkx6WD7f5w==",
       "dependencies": [
         "groq-sdk",
         "ws"
@@ -616,7 +616,7 @@
       "npm:consola@^3.4.0",
       "npm:discord.js@^14.27.0",
       "npm:opus-decoder@~0.7.7",
-      "npm:vxasr@0.1.0-next.8"
+      "npm:vxasr@0.1"
     ]
   }
 }

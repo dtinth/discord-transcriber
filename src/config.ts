@@ -11,7 +11,7 @@ export default {
   // Comma-separated vxasr configuration ids, in retry order.
   ASR_CONFIGURATIONS:
     process.env.ASR_CONFIGURATIONS ||
-    "qwen-omni/qwen3.5-omni-flash-realtime-2026-03-15",
+    "openrouter/microsoft/mai-transcribe-1.5",
 
   /**
    * Reuse a speaker's vendor connection for their next utterance, so the model
