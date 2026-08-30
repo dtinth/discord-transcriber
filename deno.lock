@@ -1,12 +1,12 @@
 {
   "version": "5",
   "specifiers": {
-    "npm:@discordjs/voice@~0.19.2": "0.19.2_@emnapi+core@1.11.3_@emnapi+runtime@1.11.3_opusscript@0.1.1",
+    "npm:@discordjs/voice@~0.19.2": "0.19.2_@emnapi+core@1.11.3_@emnapi+runtime@1.11.3",
     "npm:@ricky0123/vad-node@^0.0.3": "0.0.3",
     "npm:@types/node@24": "24.13.3",
     "npm:consola@^3.4.0": "3.4.2",
     "npm:discord.js@^14.27.0": "14.27.0",
-    "npm:opus-decoder@~0.7.7": "0.7.11",
+    "npm:opus-decoder@~0.7.7": "0.7.12",
     "npm:vxasr@0.1": "0.1.0"
   },
   "npm": {
@@ -54,7 +54,7 @@
         "discord-api-types"
       ]
     },
-    "@discordjs/voice@0.19.2_@emnapi+core@1.11.3_@emnapi+runtime@1.11.3_opusscript@0.1.1": {
+    "@discordjs/voice@0.19.2_@emnapi+core@1.11.3_@emnapi+runtime@1.11.3": {
       "integrity": "sha512-3yJ255e4ag3wfZu/DSxeOZK1UtnqNxnspmLaQetGT0pDkThNZoHs+Zg6dgZZ19JEVomXygvfHn9lNpICZuYtEA==",
       "dependencies": [
         "@snazzah/davey",
@@ -266,8 +266,8 @@
         "event-target-shim"
       ]
     },
-    "adm-zip@0.5.18": {
-      "integrity": "sha512-ufJnssQGbxzLNS1Ho9bCtX4rQKCCvoVuDLHoJyc3F9dOGDB4BkWs2Ci0kv53lqocAEQ/Cbi+I2XCsNYGqVYqng=="
+    "adm-zip@0.6.0": {
+      "integrity": "sha512-XleryMhbuksdKtofnWZ9Sk+4CUTbms4Mb/EU32SZwToAyZ5RgVos/ki8n+yr0LWHOGKuakbXTuuYNHLQjhddgg=="
     },
     "agentkeepalive@4.6.0": {
       "integrity": "sha512-kja8j7PjmncONqaTsB8fQ+wE2mSU2DJ9D4XKoJ5PFWIdRMa6SLSN1ff4mOr4jCbfRSsxR4keIiySJU0N9T5hIQ==",
@@ -518,11 +518,11 @@
     "object-keys@1.1.1": {
       "integrity": "sha512-NuAESUOUMrlIXOfHKzD6bpPu3tYt3xvjNdRIQ+FeT0lNb4K8WR70CaDxhuNguS2XG+GjkyMwOzsN5ZktImfhLA=="
     },
-    "onnxruntime-common@1.27.0": {
-      "integrity": "sha512-3KxL5wIVqa8Ex08jxSzncm9CMgw8CjOFyOQ7SxvG9o0cVLlhTNKXyIQuTbtX4tGPJEf73OER2xrjt4HJSBL4ow=="
+    "onnxruntime-common@1.29.0": {
+      "integrity": "sha512-/F63/e2VJoaVXGGNu6S5QH7jivBThGO95OzAVXXQ8hTta/b1QxI8udHa6cI3+3mAb5WWIIaMMwfZw01oivjJ1g=="
     },
-    "onnxruntime-node@1.27.0": {
-      "integrity": "sha512-QEzGwrvNBgv4uPVdnbHsOGG4G6T96mdlcFI8aAKPjMU8wOPpVocPXb6k3QGkaZagVTv2G9Bnnbo6Z3JdXr1fQw==",
+    "onnxruntime-node@1.29.0": {
+      "integrity": "sha512-WjiVVB72riILz8HbYvxvmjKyE/WmkYoSfKY++axo5jAR609HQg8MwiG/HhShpTcJfmmAdzxxmB+MMST3A+SiPA==",
       "dependencies": [
         "adm-zip",
         "global-agent",
@@ -531,23 +531,14 @@
       "os": ["win32", "darwin", "linux"],
       "scripts": true
     },
-    "opus-decoder@0.7.11": {
-      "integrity": "sha512-+e+Jz3vGQLxRTBHs8YJQPRPc1Tr+/aC6coV/DlZylriA29BdHQAYXhvNRKtjftof17OFng0+P4wsFIqQu3a48A==",
+    "opus-decoder@0.7.12": {
+      "integrity": "sha512-6zpHFDi/MhYvMwyYiuJPqJ2lcRkfm7wHblSvT3lUtx/kLvHkunoe/rhTn1dLKxqVGLeQj3gQi7CnR0N2p3RuOg==",
       "dependencies": [
         "@wasm-audio-decoders/common"
       ]
     },
-    "opusscript@0.1.1": {
-      "integrity": "sha512-mL0fZZOUnXdZ78woRXp18lApwpp0lF5tozJOD1Wut0dgrA9WuQTgSels/CSmFleaAZrJi/nci5KOVtbuxeWoQA=="
-    },
-    "prism-media@1.3.5_opusscript@0.1.1": {
-      "integrity": "sha512-IQdl0Q01m4LrkN1EGIE9lphov5Hy7WWlH6ulf5QdGePLlPas9p2mhgddTEHrlaXYjjFToM1/rWuwF37VF4taaA==",
-      "dependencies": [
-        "opusscript"
-      ],
-      "optionalPeers": [
-        "opusscript"
-      ]
+    "prism-media@1.3.5": {
+      "integrity": "sha512-IQdl0Q01m4LrkN1EGIE9lphov5Hy7WWlH6ulf5QdGePLlPas9p2mhgddTEHrlaXYjjFToM1/rWuwF37VF4taaA=="
     },
     "semver@7.8.5": {
       "integrity": "sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==",

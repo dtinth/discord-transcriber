@@ -42,5 +42,21 @@
     "node_modules",
     "testdata",
     "usage.db"
+  ],
+  "minimumDependencyAge": {
+    "exclude": [
+      "npm:vxasr"
+    ]
+  },
+  "//minimumDependencyAge": [
+    "Deno refuses npm packages younger than 24 hours, which is a supply-chain",
+    "protection worth keeping. `exclude` lifts it for one package only \u2014 proven",
+    "by A/B: with npm:vxasr excluded the install passes, and with a different",
+    "package excluded vxasr is blocked again, so the policy still guards",
+    "everything else.",
+    "vxasr is exempt because it is this project's own upstream (dtinth/vxbeamer):",
+    "the risk the delay buys time against is a compromised third-party publisher,",
+    "and here the publisher is us. Nothing else should be added to this list",
+    "without the same argument."
   ]
 }
