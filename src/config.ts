@@ -51,6 +51,20 @@ export default {
     | "total",
 
   /**
+   * How long a session may receive no voice at all before the bot leaves,
+   * in milliseconds. 0 disables the sweep.
+   *
+   * Measured on voice, never on who is in the channel. A radio bot holds the
+   * member count above zero indefinitely, and somebody AFK is still a member,
+   * so "am I alone?" answers the wrong question. "Has anybody spoken in half
+   * an hour?" answers the right one.
+   *
+   * Leaving also uploads the transcript, so a session everybody walked away
+   * from still produces its file rather than losing it.
+   */
+  IDLE_TIMEOUT_MS: intEnv("IDLE_TIMEOUT_MS", 1_800_000),
+
+  /**
    * Port for the stats HTTP server. 0 disables it.
    *
    * It exists to answer one question before a redeploy: is anybody mid-session

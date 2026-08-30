@@ -26,6 +26,7 @@ const session = {
   speakers: 0,
   pendingUtterances: 0,
   transcribed: 4,
+  idleSeconds: 12,
 };
 
 test("/healthz answers without touching the stats", async () => {
@@ -73,6 +74,17 @@ test("the snapshot is read fresh on every request", async () => {
   const second = await (await app.fetch(new Request("http://localhost/stats"))).json();
   assert.equal(first.activeSessions, 1);
   assert.equal(second.activeSessions, 2, "a cached snapshot would be useless");
+});
+
+// A session can be open, not busy, and still long abandoned — that is what
+// the idle sweep exists for, and /stats must show it before the sweep runs.
+test("/stats exposes how long a session has been silent", async () => {
+  const app = createStatsApp(() =>
+    stats({ activeSessions: 1, sessions: [{ ...session, idleSeconds: 1700 }] })
+  );
+  const body = await (await app.fetch(new Request("http://localhost/stats"))).json();
+  assert.equal(body.sessions[0].idleSeconds, 1700);
+  assert.equal(body.busy, false);
 });
 
 test("an unknown path is a 404, not a crash", async () => {

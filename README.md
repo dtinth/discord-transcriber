@@ -114,6 +114,16 @@ nobody speaking restarts harmlessly.
 
 Set `HTTP_PORT=0` to switch the server off.
 
+## Idle sessions
+
+The bot leaves a voice channel after 30 minutes with no voice received
+(`IDLE_TIMEOUT_MS`), and uploads the transcript as it goes, so a session
+everybody walked away from still leaves its file behind.
+
+It is measured on **speech**, not on who is in the channel — a radio bot or an
+AFK member would otherwise keep a dead session open indefinitely. Set
+`IDLE_TIMEOUT_MS=0` to disable it.
+
 ## Development
 
 ```
