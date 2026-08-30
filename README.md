@@ -81,6 +81,39 @@ In Discord, use the following commands:
 
 The commands are registered globally when the bot logs in.
 
+## Stats endpoint
+
+The bot serves its own status on `HTTP_PORT` (default 3000, loopback only):
+
+```bash
+curl localhost:3000/stats
+curl localhost:3000/healthz
+```
+
+```json
+{
+  "startedAt": "2026-08-30T12:00:00.000Z",
+  "uptimeSeconds": 5400,
+  "activeSessions": 1,
+  "busy": false,
+  "sessions": [
+    {
+      "guildId": "…", "channelId": "…",
+      "startedAt": "2026-08-30T13:20:00.000Z", "uptimeSeconds": 600,
+      "speakers": 0, "pendingUtterances": 0, "transcribed": 42
+    }
+  ]
+}
+```
+
+**Check `busy` before a redeploy.** A restart drops every voice connection and
+abandons any utterance still at the vendor. `busy` is true when somebody is
+speaking or a transcript is still coming back — that is the moment a restart
+loses words. `activeSessions` on its own is not the signal: a session with
+nobody speaking restarts harmlessly.
+
+Set `HTTP_PORT=0` to switch the server off.
+
 ## Development
 
 ```

@@ -17,6 +17,7 @@ import {
   USAGE_SUBCOMMAND,
 } from "./commands.ts";
 import config from "./config.ts";
+import { startStatsServer, type BotStats } from "./http-server.ts";
 import logger from "./logger.ts";
 import { TranscriptionService } from "./transcription.ts";
 import { UsageStore } from "./usage-store.ts";
@@ -83,6 +84,40 @@ const transcriptionService = new TranscriptionService(
 
 // Map to track active transcription sessions
 const activeTranscriptions = new Map();
+
+const PROCESS_STARTED_AT = Date.now();
+
+/** The snapshot served by GET /stats. Read fresh on every request. */
+function collectStats(): BotStats {
+  const now = Date.now();
+  const sessions = [...activeTranscriptions.entries()].map(
+    ([guildId, entry]) => {
+      const stats = transcriptionService.sessionStats(entry.subscription);
+      return {
+        guildId,
+        channelId: entry.channelId ?? null,
+        startedAt: new Date(entry.startedAt).toISOString(),
+        uptimeSeconds: Math.round((now - entry.startedAt) / 1000),
+        ...stats,
+      };
+    }
+  );
+  return {
+    startedAt: new Date(PROCESS_STARTED_AT).toISOString(),
+    uptimeSeconds: Math.round((now - PROCESS_STARTED_AT) / 1000),
+    activeSessions: sessions.length,
+    busy: sessions.some(
+      (session) => session.speakers > 0 || session.pendingUtterances > 0
+    ),
+    sessions,
+  };
+}
+
+if (config.HTTP_PORT > 0) {
+  startStatsServer(config.HTTP_PORT, config.HTTP_HOST, collectStats);
+} else {
+  console.log("Stats server disabled (HTTP_PORT is 0)");
+}
 
 client.once(Events.ClientReady, async (ready) => {
   console.log(`Logged in as ${ready.user.tag}`);
@@ -153,6 +188,8 @@ async function handleStart(interaction: ChatInputCommandInteraction) {
       connection,
       subscription,
       textChannel: interaction.channel,
+      channelId: voiceChannel.id,
+      startedAt: Date.now(),
     });
 
     connection.on(VoiceConnectionStatus.Disconnected, () => {

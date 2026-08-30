@@ -14,7 +14,10 @@ services:
 
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN:?set DISCORD_TOKEN in .env}
-      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:?set DASHSCOPE_API_KEY in .env}
+      # Required by the default model (openrouter/microsoft/mai-transcribe-1.5).
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY in .env}
+      # Only needed if ASR_CONFIGURATIONS names a qwen or qwen-omni model.
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
 
       # Spend cap. 0 means no cap, which is not what you want on a public bot.
       BUDGET_USD: ${BUDGET_USD:-0}
@@ -27,6 +30,18 @@ services:
 
       # Inside the container the ledger belongs on the volume below.
       USAGE_DB: /data/usage.db
+
+      # The stats server must bind to all interfaces *inside* the container,
+      # or the published port below reaches nothing. It is the port mapping,
+      # not this, that keeps it off the public internet.
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: 3000
+
+    # Loopback only: the response names every guild the bot transcribes for.
+    # Read it with `curl localhost:3000/stats` before a redeploy, and check
+    # `busy` — true means somebody is mid-sentence and a restart loses it.
+    ports:
+      - "127.0.0.1:${HTTP_PORT:-3000}:3000"
 
     volumes:
       # The spend ledger. **Not optional.** Without it every redeploy starts the
