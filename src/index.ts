@@ -113,6 +113,21 @@ function collectStats(): BotStats {
   };
 }
 
+if (config.IDLE_TIMEOUT_MS > 0) {
+  // Checked once a minute; the timeout is half an hour, so the granularity
+  // costs nothing and the sweep stays off the hot path entirely.
+  setInterval(() => {
+    void sweepIdleSessions().catch((error) =>
+      console.error("Error sweeping idle sessions:", error)
+    );
+  }, 60_000);
+  console.log(
+    `Idle sessions are closed after ${Math.round(config.IDLE_TIMEOUT_MS / 60000)} minutes with no voice`
+  );
+} else {
+  console.log("Idle disconnect disabled (IDLE_TIMEOUT_MS is 0)");
+}
+
 if (config.HTTP_PORT > 0) {
   startStatsServer(config.HTTP_PORT, config.HTTP_HOST, collectStats);
 } else {
@@ -206,6 +221,84 @@ async function handleStart(interaction: ChatInputCommandInteraction) {
   }
 }
 
+/**
+ * Close a session and build its transcript.
+ *
+ * Shared by `/transcriber stop` and the idle sweep, because the order here is
+ * the part that is easy to get wrong: the voice connection must be destroyed
+ * only *after* the transcript is built, or tearing it down aborts the very
+ * utterances the file would otherwise be missing.
+ *
+ * The caller removes the session from `activeTranscriptions` first, so a
+ * second stop cannot start a second drain while this one is still waiting.
+ */
+async function closeSession(
+  entry: { subscription: string; connection: { destroy: () => void } },
+  onWaiting?: () => void
+) {
+  let attachment = null;
+  try {
+    attachment = await transcriptionService.finishAndBuildTranscript(
+      entry.subscription,
+      onWaiting
+    );
+  } catch (error) {
+    console.error("Error building the session transcript:", error);
+  }
+
+  transcriptionService.stopTranscription(entry.subscription);
+  try {
+    entry.connection.destroy();
+  } catch (error) {
+    // Already destroyed (kicked, moved, network) — the session is gone either
+    // way, and throwing here would strand the transcript we just built.
+    logger.debug("Voice connection was already destroyed:", error);
+  }
+  return attachment;
+}
+
+/**
+ * Leave any session that has received no voice for IDLE_TIMEOUT_MS.
+ *
+ * Idleness is measured on speech, not on who is in the channel — see
+ * `TranscriptionService.lastActivity`. The transcript is still uploaded, so a
+ * meeting everybody walked away from leaves its file behind.
+ */
+async function sweepIdleSessions() {
+  const timeout = config.IDLE_TIMEOUT_MS;
+  if (timeout <= 0) return;
+
+  for (const [guildId, entry] of [...activeTranscriptions.entries()]) {
+    const idleMs = transcriptionService.idleMs(entry.subscription);
+    if (idleMs < timeout) continue;
+
+    // Removed first, exactly as the command does: the drain below awaits, and
+    // a `/transcriber stop` arriving meanwhile must not start a second one.
+    activeTranscriptions.delete(guildId);
+    const minutes = Math.round(idleMs / 60000);
+    console.log(`Leaving guild ${guildId}: no voice for ${minutes} minutes`);
+
+    try {
+      const attachment = await closeSession(entry);
+      const channel = entry.textChannel;
+      if (channel && "send" in channel) {
+        await channel
+          .send({
+            content:
+              `Transcription stopped: nobody has spoken for ${minutes} minutes.` +
+              (attachment ? "" : " Nothing was transcribed."),
+            ...(attachment ? { files: [attachment] } : {}),
+          })
+          .catch((error: unknown) =>
+            console.error("Error announcing the idle stop:", error)
+          );
+      }
+    } catch (error) {
+      console.error(`Error closing the idle session in guild ${guildId}:`, error);
+    }
+  }
+}
+
 /** `/transcriber stop` — drain, upload the transcript, then leave. */
 async function handleStop(interaction: ChatInputCommandInteraction) {
   const transcription = activeTranscriptions.get(interaction.guildId);
@@ -227,25 +320,11 @@ async function handleStop(interaction: ChatInputCommandInteraction) {
   // Deferring buys 15 minutes, which the 20 s drain fits inside comfortably.
   await interaction.deferReply();
 
-  let attachment = null;
-  try {
-    attachment = await transcriptionService.finishAndBuildTranscript(
-      transcription.subscription,
-      () => {
-        void interaction
-          .editReply("*Stopping — waiting for the last transcripts…*")
-          .catch(() => {});
-      }
-    );
-  } catch (error) {
-    console.error("Error building the session transcript:", error);
-  }
-
-  // The connection is destroyed only after the transcript is built: tearing
-  // it down first would abort the utterances still being transcribed, which
-  // are exactly the ones the file would otherwise be missing.
-  transcriptionService.stopTranscription(transcription.subscription);
-  transcription.connection.destroy();
+  const attachment = await closeSession(transcription, () => {
+    void interaction
+      .editReply("*Stopping — waiting for the last transcripts…*")
+      .catch(() => {});
+  });
 
   if (attachment) {
     await interaction

@@ -122,10 +122,16 @@ Required environment variables in `.env` file:
 - **Tests must use a realistic host in the request URL.** Elysia finds the path with `indexOf("/", 11)`, so `http://x/stats` puts the path before that offset and every route 404s. A real request always carries a real host, so this is a test-only trap — `http://localhost/stats` is fine
 - Binding is loopback by default because the response names every guild the bot transcribes for. In Docker `HTTP_HOST` must be `0.0.0.0` for the published port to reach it; `compose.yaml` publishes to `127.0.0.1` on the host instead
 
-## The bot does not leave an empty channel
+## Idle sessions
 
-- There is **no** auto-disconnect. The only voice handler is `VoiceConnectionStatus.Disconnected`, which reacts to *being* disconnected (kicked, moved, network), not to being alone. There is no `voiceStateUpdate` listener and no idle timer
-- So a session stays open until somebody runs `/transcriber stop`. It costs nothing — no audio means no vendor calls — but it holds the guild's slot, so `/transcriber start` answers "already active", and it inflates `activeSessions` in `/stats` with sessions nobody is using
+- The bot leaves after `IDLE_TIMEOUT_MS` (default 1 800 000 ms = 30 min) with **no voice received**, and uploads the transcript on the way out — a meeting everybody walked away from still leaves its file
+- **Idleness is measured on speech, never on channel membership.** "Am I alone?" is the wrong question: a radio bot holds the member count above zero for ever, and somebody genuinely AFK is still a member. `TranscriptionService.lastActivity` is touched from `receiver.speaking.on("start")`
+- That touch is **before** the budget check on purpose. A session the budget has paused is still receiving voice, and walking out on people who are talking is worse than staying open a while longer
+- The sweep runs once a minute. Against a 30-minute timeout the granularity is free, and it keeps the check off the audio path
+- `idleMs()` returns 0 for a subscription the service has forgotten, so a stale id can never trigger a sweep
+- `closeSession()` is shared by `/transcriber stop` and the sweep. The ordering it protects — build the transcript, *then* destroy the connection — is the easy thing to get wrong twice
+- `/stats` reports `idleSeconds` per session, so an abandoned session is visible before the sweep collects it
+- There is still no `voiceStateUpdate` listener. `VoiceConnectionStatus.Disconnected` remains the only voice handler, and reacts to *being* disconnected (kicked, moved, network)
 
 ## Code Style Guidelines
 

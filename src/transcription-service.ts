@@ -32,6 +32,15 @@ export class TranscriptionService {
   /** Utterances still awaiting a transcript, per session. */
   private pending: Map<string, PendingUtterances> = new Map();
   private transcriptionChannels: Map<string, TextBasedChannel> = new Map();
+  /**
+   * When each session last received voice.
+   *
+   * Deliberately *voice*, not channel membership. Counting who is in the
+   * channel misreads the ordinary cases: a radio bot keeps the count above
+   * zero for ever, and somebody genuinely AFK is still a member. What the bot
+   * is there for is speech, so speech is what its idleness is measured by.
+   */
+  private lastActivity: Map<string, number> = new Map();
 
   constructor(
     private asr: AsrSetup,
@@ -68,6 +77,7 @@ export class TranscriptionService {
     this.transcripts.set(subscriptionId, transcript);
     const pending = new PendingUtterances();
     this.pending.set(subscriptionId, pending);
+    this.lastActivity.set(subscriptionId, Date.now());
 
     const channelId = "id" in textChannel ? (textChannel.id as string) : null;
     /** Said once per session, so a spent budget does not spam the channel. */
@@ -75,6 +85,11 @@ export class TranscriptionService {
 
     receiver.speaking.on("start", (userId) => {
       logger.debug(`User ${userId} started speaking`);
+
+      // Before the budget check on purpose. A session the budget has paused is
+      // still receiving voice, and leaving the channel out from under people
+      // who are talking is a worse failure than staying a while longer.
+      this.lastActivity.set(subscriptionId, Date.now());
 
       // Checked before the utterance opens a vendor session — the only moment
       // refusing is free. Stopping mid-flight would mean paying for audio the
@@ -214,12 +229,23 @@ export class TranscriptionService {
     speakers: number;
     pendingUtterances: number;
     transcribed: number;
+    idleSeconds: number;
   } {
     return {
       speakers: this.sessions.get(subscriptionId)?.size ?? 0,
       pendingUtterances: this.pending.get(subscriptionId)?.size ?? 0,
       transcribed: this.transcripts.get(subscriptionId)?.size ?? 0,
+      idleSeconds: Math.round(this.idleMs(subscriptionId) / 1000),
     };
+  }
+
+  /**
+   * How long since this session last received voice. A session the service no
+   * longer knows about reads as 0, so a lost id can never trigger a sweep.
+   */
+  idleMs(subscriptionId: string, now = Date.now()): number {
+    const last = this.lastActivity.get(subscriptionId);
+    return last === undefined ? 0 : now - last;
   }
 
   stopTranscription(subscriptionId: string) {
@@ -233,6 +259,7 @@ export class TranscriptionService {
 
     // Clean up the channel reference
     this.transcriptionChannels.delete(subscriptionId);
+    this.lastActivity.delete(subscriptionId);
     this.transcripts.delete(subscriptionId);
     this.pending.delete(subscriptionId);
   }

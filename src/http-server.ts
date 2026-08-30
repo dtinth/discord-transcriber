@@ -13,6 +13,8 @@ export interface SessionStats {
   pendingUtterances: number;
   /** Utterances already transcribed in this session. */
   transcribed: number;
+  /** Seconds since anybody last spoke. The idle sweep acts on this. */
+  idleSeconds: number;
 }
 
 export interface BotStats {

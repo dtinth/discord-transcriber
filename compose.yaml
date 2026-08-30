@@ -24,6 +24,10 @@ services:
       BUDGET_PER_GUILD_USD: ${BUDGET_PER_GUILD_USD:-0}
       BUDGET_PERIOD: ${BUDGET_PERIOD:-month}
 
+      # Leave a channel after this long with no voice, uploading the
+      # transcript on the way out. 0 keeps sessions open indefinitely.
+      IDLE_TIMEOUT_MS: ${IDLE_TIMEOUT_MS:-1800000}
+
       ASR_CONFIGURATIONS: ${ASR_CONFIGURATIONS:-}
       ASR_SESSION_REUSE: ${ASR_SESSION_REUSE:-1}
       LOG_LEVEL: ${LOG_LEVEL:-4}
