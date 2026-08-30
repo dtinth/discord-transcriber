@@ -6,7 +6,11 @@ import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import { readPcm } from "vxasr/audio";
 import type { AsrSetup } from "./asr-setup.ts";
-import { UserAudioStream, type SpeechSegment } from "./user-audio-stream.ts";
+import {
+  UserAudioStream,
+  type SegmentationOptions,
+  type SpeechSegment,
+} from "./user-audio-stream.ts";
 
 /**
  * The receive path, end to end, with no Discord and no network: opus decode ->
@@ -54,7 +58,7 @@ interface Captured {
 async function runPipeline(
   /** Milliseconds between packets. 0 feeds everything at once. */
   packetIntervalMs = 0,
-  maxUtteranceMs = 120_000
+  segmentation: SegmentationOptions = {}
 ): Promise<Captured[]> {
   const packets = readOpusPackets(readFileSync(PACKETS));
 
@@ -77,7 +81,7 @@ async function runPipeline(
         finalize: () => (segment.finalized = true),
       } satisfies SpeechSegment;
     },
-    maxUtteranceMs
+    segmentation
   );
 
   // Fed as fast as the pipeline will take it. Segmentation is measured on the
@@ -163,12 +167,63 @@ test("segmentation does not depend on how fast the packets arrive", async () => 
   });
 });
 
+// Impatience shrinks the pause needed to end an utterance as it lengthens, so
+// a long one stops at a breath instead of waiting to be sliced by the cap.
+test("a long utterance ends at a pause, before the cap can cut it", async () => {
+  // A 4 s cap stands in for the real 120 s one: what matters is where the
+  // utterance ends *relative to the budget*, and the fixture is 8 s long.
+  const patient = await runPipeline(0, {
+    maxUtteranceMs: 4000,
+    minSilenceDuration: 1500, // impatience off: only the cap can split
+  });
+  const impatient = await runPipeline(0, {
+    maxUtteranceMs: 4000,
+    minSilenceDuration: 200,
+  });
+
+  const cap = 4000 * 32; // bytes of 16 kHz mono 16-bit audio in one cap window
+  assert.ok(
+    patient[0].bytes >= cap,
+    `without impatience the cap should run to the end of its window, got ${patient[0].bytes}`
+  );
+  assert.ok(
+    impatient[0].bytes < patient[0].bytes,
+    `impatience should end the utterance earlier: ${impatient[0].bytes} vs ${patient[0].bytes}`
+  );
+  assert.ok(
+    impatient[0].bytes < cap,
+    "the earlier ending must come from a pause, not from the cap firing"
+  );
+  assert.ok(
+    impatient.every((segment) => segment.finalized),
+    "every segment must still be finalized, or its transcript is never requested"
+  );
+});
+
+// The reason for the easing exponent: whatever impatience does to a monologue,
+// it must do nothing at all to ordinary speech at the shipped settings.
+test("ordinary speech segments exactly as it did before impatience", async () => {
+  const withImpatience = await runPipeline();
+  const without = await runPipeline(0, { minSilenceDuration: 1500 });
+
+  assert.deepEqual(
+    withImpatience.map((segment) => segment.bytes),
+    without.map((segment) => segment.bytes),
+    "at the default 120 s budget an 8 s fixture must be unaffected"
+  );
+});
+
 test("speech that never pauses is split instead of growing without limit", async () => {
   // Nothing in the fixture pauses for the 1.5 s the VAD wants, within a
   // sentence — so with a 1 s cap the first sentence alone must be split, and
   // no audio may be dropped on the way.
-  const capped = await runPipeline(0, 1000);
-  const uncapped = await runPipeline();
+  //
+  // Impatience is switched off here (floor == ceiling) so this measures the
+  // hard cap alone. With it on, these utterances would end on a short pause
+  // first and the test could not say which of the two rules had acted.
+  const noImpatience = { minSilenceDuration: 1500, silenceDuration: 1500 };
+  const capped = await runPipeline(0, { ...noImpatience, maxUtteranceMs: 1000 });
+  const uncapped = await runPipeline(0, noImpatience);
 
   assert.ok(
     capped.length > uncapped.length,

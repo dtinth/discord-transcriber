@@ -22,6 +22,43 @@ const VAD_FRAME_MS = (1024 / 16000) * 1000;
 const PRE_ROLL_BYTES = 10240;
 
 /**
+ * The silence an utterance must contain before it ends, given how long it has
+ * already run.
+ *
+ * Constant `silenceDuration` for a short utterance, shrinking toward
+ * `minSilenceDuration` as `lengthMs` approaches `maxUtteranceMs`. The point is
+ * the cut *point*, not the cut: the hard cap slices at whatever syllable is
+ * being spoken when the clock runs out, while impatience makes a long
+ * utterance end at the speaker's next breath — which is where a sentence
+ * boundary actually is.
+ *
+ * Adapted from dtinth/live-speech, where the same idea appears as a decay rate
+ * on a level envelope that accelerates with the segment length.
+ */
+export function silenceNeededAfter(
+  lengthMs: number,
+  {
+    silenceDuration,
+    minSilenceDuration,
+    maxUtteranceMs,
+    easing,
+  }: {
+    silenceDuration: number;
+    minSilenceDuration: number;
+    maxUtteranceMs: number;
+    easing: number;
+  }
+): number {
+  // A misconfigured floor must never make the segmenter *more* patient than
+  // SILENCE_DURATION, which would silently disable the cap's replacement.
+  const floor = Math.min(minSilenceDuration, silenceDuration);
+  if (maxUtteranceMs <= 0) return floor;
+
+  const progress = Math.min(1, Math.max(0, lengthMs) / maxUtteranceMs) ** easing;
+  return silenceDuration - progress * (silenceDuration - floor);
+}
+
+/**
  * Processes one user's live audio: decodes opus, downsamples once to the
  * 16 kHz mono format that both the VAD and vxasr consume, segments speech
  * with Silero VAD, and routes the audio of each segment into an
@@ -39,6 +76,17 @@ export interface SpeechSegment {
  * VAD path can be exercised against real audio with no network and no channel.
  */
 export type SegmentFactory = (userId: string) => SpeechSegment;
+
+/**
+ * Segmentation timings, overridable so tests can isolate one rule at a time.
+ * Anything omitted falls back to {@link config}.
+ */
+export interface SegmentationOptions {
+  maxUtteranceMs?: number;
+  silenceDuration?: number;
+  minSilenceDuration?: number;
+  impatienceEasing?: number;
+}
 
 export class UserAudioStream {
   private opusDecoder = new OpusStreamDecoder();
@@ -80,7 +128,10 @@ export class UserAudioStream {
   private inactivityTimeout = config.STALL_TIMEOUT_MS;
   private activationThreshold = config.ACTIVATION_THRESHOLD;
   private deactivationThreshold = config.DEACTIVATION_THRESHOLD;
-  private silenceDuration = config.SILENCE_DURATION;
+  private silenceDuration: number;
+  private minSilenceDuration: number;
+  private impatienceEasing: number;
+  private maxUtteranceMs: number;
 
   constructor(
     private userId: string,
@@ -96,8 +147,16 @@ export class UserAudioStream {
     private transcript?: TranscriptSink,
     private createSegment: SegmentFactory = (userId) =>
       new Utterance(userId, textChannel, asr, clientId, usage, transcript),
-    private maxUtteranceMs: number = config.MAX_UTTERANCE_MS
+    segmentation: SegmentationOptions = {}
   ) {
+    this.maxUtteranceMs = segmentation.maxUtteranceMs ?? config.MAX_UTTERANCE_MS;
+    this.silenceDuration =
+      segmentation.silenceDuration ?? config.SILENCE_DURATION;
+    this.minSilenceDuration =
+      segmentation.minSilenceDuration ?? config.MIN_SILENCE_DURATION;
+    this.impatienceEasing =
+      segmentation.impatienceEasing ?? config.IMPATIENCE_EASING;
+
     this.initializeVAD()
       .then(() => {
         this.processAudioStream();
@@ -223,9 +282,10 @@ export class UserAudioStream {
         this.preRoll = [];
         this.preRollBytes = 0;
       }
-      // Speech that never pauses would otherwise grow one utterance without
-      // limit. Split it and carry straight on, so the audio is all still
-      // transcribed — just as two messages rather than one endless one.
+      // The backstop. Impatience above needs a pause to act on, so sound that
+      // never dips — music, a tone, a room that is never quiet — reaches here
+      // and nothing else does. Split it and carry straight on, so the audio is
+      // all still transcribed, just as two messages rather than one endless one.
       if (this.audioMs - this.utteranceStartedAtMs >= this.maxUtteranceMs) {
         logger.info(
           `Splitting a long utterance for user ${this.userId} at ` +
@@ -237,8 +297,23 @@ export class UserAudioStream {
       }
     } else if (this.isSpeaking) {
       const silence = this.audioMs - this.lastSpeechAudioMs;
-      if (silence > this.silenceDuration) {
-        logger.info(`Speech end detected for user ${this.userId}`);
+      // The longer this utterance has run, the smaller the pause that ends it.
+      // A monologue therefore stops at a breath, well before the hard cap has
+      // to cut it mid-word.
+      const needed = silenceNeededAfter(
+        this.audioMs - this.utteranceStartedAtMs,
+        {
+          silenceDuration: this.silenceDuration,
+          minSilenceDuration: this.minSilenceDuration,
+          maxUtteranceMs: this.maxUtteranceMs,
+          easing: this.impatienceEasing,
+        }
+      );
+      if (silence > needed) {
+        logger.info(
+          `Speech end detected for user ${this.userId} ` +
+            `(${Math.round(silence)}ms silence, needed ${Math.round(needed)}ms)`
+        );
         this.endUtterance();
       }
     }

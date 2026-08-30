@@ -4,6 +4,12 @@ function intEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+/** Reads a floating-point env var, falling back when unset or unparseable. */
+function floatEnv(name: string, fallback: number): number {
+  const parsed = parseFloat(process.env[name] ?? "");
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 export default {
   // Discord bot token
   DISCORD_TOKEN: process.env.DISCORD_TOKEN || "",
@@ -73,6 +79,39 @@ export default {
    * audio; it only decides where one message ends and the next begins.
    */
   MAX_UTTERANCE_MS: intEnv("MAX_UTTERANCE_MS", 120_000),
+
+  /**
+   * The shortest pause that may end an utterance, in milliseconds, reached as
+   * the utterance approaches {@link MAX_UTTERANCE_MS}.
+   *
+   * The cap on its own is a stopwatch: it cuts at 120.000 s whatever is being
+   * said, splitting a word in half and giving both halves to the model with
+   * their context missing. So instead of waiting for it, the segmenter grows
+   * *impatient* — the silence it demands shrinks from SILENCE_DURATION toward
+   * this value as the utterance lengthens, and a long monologue ends at the
+   * speaker's next breath rather than mid-syllable.
+   *
+   * The idea is from dtinth/live-speech, which applies an accelerating decay to
+   * a level envelope. This states it directly in milliseconds instead, so the
+   * knob still says what it does.
+   *
+   * The cap stays, as the backstop. Impatience needs a pause to act on, and
+   * sound that never dips at all — music, a tone, a noisy room — gives it none.
+   * That is the case MAX_UTTERANCE_MS was written for, and it remains the only
+   * case that reaches it.
+   */
+  MIN_SILENCE_DURATION: intEnv("MIN_SILENCE_DURATION", 300),
+
+  /**
+   * Shape of the impatience curve: the exponent applied to how far the
+   * utterance has run through {@link MAX_UTTERANCE_MS}.
+   *
+   * Above 1 the curve is flat at first and steep near the end, so ordinary
+   * utterances keep the full SILENCE_DURATION and only a long one is hurried.
+   * 1 is a straight line; below 1 the patience drops away immediately, which
+   * would break up normal speech.
+   */
+  IMPATIENCE_EASING: floatEnv("IMPATIENCE_EASING", 1.25),
 
   /**
    * Wall-clock silence, in milliseconds, that means audio stopped *arriving* —

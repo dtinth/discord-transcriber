@@ -133,7 +133,9 @@ Required environment variables in `.env` file:
 
 - Uses Silero VAD model through @ricky0123/vad-node
 - Configurable activation (0.5) and deactivation (0.3) thresholds
-- `MAX_UTTERANCE_MS` (120 s) splits an utterance that never pauses — music or a noisy room otherwise grows one without limit. It splits and continues, so no audio is dropped
+- **The pause that ends an utterance shrinks as the utterance grows.** `silenceNeededAfter()` interpolates from `SILENCE_DURATION` (1500 ms) down to `MIN_SILENCE_DURATION` (300 ms) as the utterance approaches `MAX_UTTERANCE_MS`, along `progress ** IMPATIENCE_EASING` (1.25). The exponent above 1 is what keeps the curve flat early: at 10 s an utterance still needs ~1446 ms, at 30 s ~1288 ms, and only near the cap does a breath suffice. Ordinary speech is measurably untouched — `pipeline.test.ts` asserts byte-identical segmentation at the shipped defaults
+- The idea is from [dtinth/live-speech](https://github.com/dtinth/live-speech), which expresses it as a decay rate on a level envelope that accelerates with segment length. Restating it in milliseconds keeps the knob readable, and keeps our audio-clock design
+- `MAX_UTTERANCE_MS` (120 s) remains as the **hard backstop**, and is now the *only* rule that can cut mid-word. Impatience needs a pause to act on, so sound that never dips at all — music, a tone, a room that is never quiet — is all that still reaches it. That is the case it was written for. live-speech has no such backstop and its segments can grow without limit on a sustained sound; ours must keep one
 - Three timings, ordered on purpose: `SILENCE_DURATION` (1500 ms, audio clock) ends an utterance while packets flow; `STALL_TIMEOUT_MS` (2000 ms, wall clock) takes over when audio stops arriving; `RECEIVER_SILENCE_MS` (2500 ms) is when Discord ends the stream and is the ceiling on both
 - Uses hysteresis pattern to avoid rapid on/off switching during speech
 - Every 64 ms frame is processed (no frames skipped)
