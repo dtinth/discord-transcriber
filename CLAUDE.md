@@ -123,6 +123,14 @@ Required environment variables in `.env` file:
 - Binding is loopback by default because the response names every guild the bot transcribes for. In Docker `HTTP_HOST` must be `0.0.0.0`, or nothing outside the container can reach it at all
 - **`compose.yaml` uses `expose`, not `ports`.** The port is documented for other containers on the network (`http://transcriber:3000`) and is deliberately not published to the host, so the guild list is not one `curl` away from anything that can reach the VPS. Reading it from the host is then `docker compose exec transcriber deno eval '…fetch…'` — which needs nothing installed, because `deno eval` runs with full permissions and deno is the image
 
+## Recovering a lost transcript
+
+- `deno task recover <channelId>` rebuilds the CSV from the channel's messages (`scripts/recover-transcript.ts`, logic in `src/recover-transcript.ts`, reusing `csvField` so the escaping is the tested one)
+- **It works because the bot authored those messages.** Discord returns the content of an application's own messages whatever intents it holds, so recovery needs no MESSAGE CONTENT intent and no access to the running process
+- Continuation messages carry no mention (a *sent* mention would ping the speaker), so the parser appends an unmatched message to the previous row instead of dropping it
+- `started_at` is the message's creation — the placeholder is posted when speech is detected — and `ended_at` is its last edit. `speaker_name` is not in the message and comes back empty
+- Read-only and safe to run against production while the bot is live
+
 ## Guild session bookkeeping (`src/guild-sessions.ts`)
 
 - `activeTranscriptions` is a `GuildSessions`, not a bare `Map`. **Every removal is identity-checked** against the subscription that owns the entry (`deleteIf(guildId, subscription)`)

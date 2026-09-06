@@ -5,7 +5,8 @@
     "test": "deno test --allow-read --allow-write --allow-env --allow-ffi --allow-net src/*.test.ts",
     "check": "deno check src/*.ts",
     "verify": "deno run --allow-read --allow-env --allow-ffi --allow-net scripts/verify-runtime.ts",
-    "fixture": "deno run --env-file=.env --allow-all scripts/make-speech-fixture.ts"
+    "fixture": "deno run --env-file=.env --allow-all scripts/make-speech-fixture.ts",
+    "recover": "deno run --env-file=.env --allow-env --allow-net --allow-write --allow-read scripts/recover-transcript.ts"
   },
   "imports": {
     "@discordjs/voice": "npm:@discordjs/voice@^0.19.2",

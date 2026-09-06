@@ -134,6 +134,24 @@ It is measured on **speech**, not on who is in the channel — a radio bot or an
 AFK member would otherwise keep a dead session open indefinitely. Set
 `IDLE_TIMEOUT_MS=0` to disable it.
 
+## Recovering a lost transcript
+
+If a session ends without producing its CSV, the transcripts are still in the
+channel — the bot posted one message per utterance. Rebuild the file from them:
+
+```bash
+deno task recover <channelId> --out transcript.csv
+# or scope it to one session:
+deno task recover <channelId> --after <firstMessageId> --out transcript.csv
+```
+
+It reads only, needs nothing but `DISCORD_TOKEN`, and is safe to run while the
+bot is live. No privileged intent is required: Discord always returns the
+content of messages the application itself wrote.
+
+`speaker_name` comes back empty (the message carries only the id), and
+utterances whose message was deleted — including silent ones — stay lost.
+
 ## Development
 
 ```
