@@ -9,7 +9,7 @@
     "npm:discord.js@^14.27.0": "14.27.0",
     "npm:elysia@^1.4.30": "1.4.30_@sinclair+typebox@0.34.52_exact-mirror@0.2.7__@sinclair+typebox@0.34.52_file-type@22.0.2_openapi-types@12.1.3",
     "npm:opus-decoder@~0.7.7": "0.7.12",
-    "npm:vxasr@0.1": "0.1.0"
+    "npm:vxasr@0.2": "0.2.0"
   },
   "jsr": {
     "@std/yaml@1.1.2": {
@@ -665,8 +665,8 @@
     "undici@6.28.0": {
       "integrity": "sha512-LIY910g9TI13YS95lrMFrs8Rm/u/irgHeTWoKCoteeJ04CUJ92eEfj0rVn+7VKMPBpUPiUoBKfhNyLI23EE/KA=="
     },
-    "vxasr@0.1.0": {
-      "integrity": "sha512-v6IZjLxIQH/HcKyB0PxB8p6xftCnZ4pLlmLfIIzYF3J9g++x7NM+MzpOnaWiEOLv4IbatDsSXiclXkx6WD7f5w==",
+    "vxasr@0.2.0": {
+      "integrity": "sha512-OfFRvkkslB5/ejx7KIOLRfOT7+jUspywKGCxyhH4D24EYenHZovTXSCBd5FXC6/bmelt0Xp6izbHF5wEeIUoDA==",
       "dependencies": [
         "groq-sdk",
         "ws"
@@ -699,7 +699,7 @@
       "npm:discord.js@^14.27.0",
       "npm:elysia@^1.4.30",
       "npm:opus-decoder@~0.7.7",
-      "npm:vxasr@0.1"
+      "npm:vxasr@0.2"
     ]
   }
 }
