@@ -123,6 +123,14 @@ Required environment variables in `.env` file:
 - Binding is loopback by default because the response names every guild the bot transcribes for. In Docker `HTTP_HOST` must be `0.0.0.0`, or nothing outside the container can reach it at all
 - **`compose.yaml` uses `expose`, not `ports`.** The port is documented for other containers on the network (`http://transcriber:3000`) and is deliberately not published to the host, so the guild list is not one `curl` away from anything that can reach the VPS. Reading it from the host is then `docker compose exec transcriber deno eval '…fetch…'` — which needs nothing installed, because `deno eval` runs with full permissions and deno is the image
 
+## Guild session bookkeeping (`src/guild-sessions.ts`)
+
+- `activeTranscriptions` is a `GuildSessions`, not a bare `Map`. **Every removal is identity-checked** against the subscription that owns the entry (`deleteIf(guildId, subscription)`)
+- Three places remove entries — the stop command, the idle sweep, and the voice connection's `Disconnected` listener. Removing by guild id alone lets a late caller evict a session it does not own, and that session then keeps running with nothing pointing at it: no command reaches it, the sweep cannot see it, `/stats` does not count it, and only a restart clears it
+- **`joinVoiceChannel` returns the *same* connection object per guild.** `createVoiceConnection` looks up `getVoiceConnection(guildId, group)` and returns it whenever it is not destroyed. So a `Disconnected` listener added per session accumulates on one shared object and fires for sessions that replaced it — listeners are now detached in `closeSession` and by the handler itself
+- **A draining session keeps its entry, marked `closing`.** The entry used to be deleted *before* a drain that waits up to 20 s, so the guild looked free; a `/transcriber start` in that gap opened a second session on the same voice connection, which the finishing stop then destroyed underneath it. Start and stop both refuse a `closing` guild, and the sweep skips it
+- **`/transcriber stop` recovers a stuck guild.** With no entry but a live `getVoiceConnection(guildId)`, it destroys the connection and says so. Leaving the channel is always a valid answer to "stop", and without this the only cure for a lost entry is restarting the bot
+
 ## Idle sessions
 
 - The bot leaves after `IDLE_TIMEOUT_MS` (default 1 800 000 ms = 30 min) with **no voice received**, and uploads the transcript on the way out — a meeting everybody walked away from still leaves its file

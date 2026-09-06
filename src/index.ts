@@ -1,4 +1,8 @@
-import { joinVoiceChannel, VoiceConnectionStatus } from "@discordjs/voice";
+import {
+  getVoiceConnection,
+  joinVoiceChannel,
+  VoiceConnectionStatus,
+} from "@discordjs/voice";
 import {
   Client,
   Events,
@@ -6,6 +10,7 @@ import {
   GuildMember,
   MessageFlags,
   type ChatInputCommandInteraction,
+  type TextBasedChannel,
 } from "discord.js";
 import { loadAsrSetup, type AsrSetup } from "./asr-setup.ts";
 import type { BudgetLimits } from "./budget.ts";
@@ -17,6 +22,7 @@ import {
   USAGE_SUBCOMMAND,
 } from "./commands.ts";
 import config from "./config.ts";
+import { GuildSessions } from "./guild-sessions.ts";
 import { startStatsServer, type BotStats } from "./http-server.ts";
 import logger from "./logger.ts";
 import { TranscriptionService } from "./transcription.ts";
@@ -82,15 +88,28 @@ const transcriptionService = new TranscriptionService(
   budgetLimits
 );
 
-// Map to track active transcription sessions
-const activeTranscriptions = new Map();
+// Live transcription sessions, one per guild. Every removal is checked
+// against the subscription that owns the entry — see GuildSessions.
+/**
+ * How to detach each session's `Disconnected` listener.
+ *
+ * The guild's voice connection outlives a session and is handed back by
+ * `joinVoiceChannel`, so a listener left attached fires for sessions that
+ * replaced it.
+ */
+const disconnectListeners = new Map<string, () => void>();
+
+const activeTranscriptions = new GuildSessions<
+  { destroy: () => void },
+  TextBasedChannel
+>();
 
 const PROCESS_STARTED_AT = Date.now();
 
 /** The snapshot served by GET /stats. Read fresh on every request. */
 function collectStats(): BotStats {
   const now = Date.now();
-  const sessions = [...activeTranscriptions.entries()].map(
+  const sessions = activeTranscriptions.entries().map(
     ([guildId, entry]) => {
       const stats = transcriptionService.sessionStats(entry.subscription);
       return {
@@ -153,6 +172,12 @@ client.once(Events.ClientReady, async (ready) => {
 
 /** `/transcriber start` — join the caller's voice channel and listen. */
 async function handleStart(interaction: ChatInputCommandInteraction) {
+  // Guaranteed by the `inGuild()` check in the dispatcher; narrowing it there
+  // does not survive the call, so it is restated rather than asserted away.
+  const guildId = interaction.guildId;
+  if (!guildId) return;
+
+
   const member =
     interaction.member instanceof GuildMember
       ? interaction.member
@@ -167,9 +192,15 @@ async function handleStart(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  if (activeTranscriptions.has(interaction.guildId)) {
+  const existing = activeTranscriptions.get(guildId);
+  if (existing) {
+    // A draining session still owns the guild's voice connection. Starting a
+    // second one here would share that connection, and the finishing stop
+    // would then destroy it underneath the new session.
     await interaction.reply({
-      content: "Transcription is already active in this server.",
+      content: existing.closing
+        ? "This server's transcription is still stopping — try again in a moment."
+        : "Transcription is already active in this server.",
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -199,7 +230,7 @@ async function handleStart(interaction: ChatInputCommandInteraction) {
       { requesterId: interaction.user.id }
     );
 
-    activeTranscriptions.set(interaction.guildId, {
+    activeTranscriptions.set(guildId, {
       connection,
       subscription,
       textChannel: interaction.channel,
@@ -207,10 +238,19 @@ async function handleStart(interaction: ChatInputCommandInteraction) {
       startedAt: Date.now(),
     });
 
-    connection.on(VoiceConnectionStatus.Disconnected, () => {
+    // Identity-checked, and removed again when the session ends. The guild's
+    // voice connection is shared and reused by `joinVoiceChannel`, so without
+    // both of these an old session's listener stays attached and evicts a
+    // *newer* session's entry, orphaning a session nothing can reach.
+    const onDisconnected = () => {
       transcriptionService.stopTranscription(subscription);
-      activeTranscriptions.delete(interaction.guildId);
-    });
+      activeTranscriptions.deleteIf(guildId, subscription);
+      connection.off(VoiceConnectionStatus.Disconnected, onDisconnected);
+    };
+    connection.on(VoiceConnectionStatus.Disconnected, onDisconnected);
+    disconnectListeners.set(subscription, () =>
+      connection.off(VoiceConnectionStatus.Disconnected, onDisconnected)
+    );
 
     await interaction.editReply(
       "Voice transcription started. I will transcribe all spoken text in this channel."
@@ -247,6 +287,8 @@ async function closeSession(
   }
 
   transcriptionService.stopTranscription(entry.subscription);
+  disconnectListeners.get(entry.subscription)?.();
+  disconnectListeners.delete(entry.subscription);
   try {
     entry.connection.destroy();
   } catch (error) {
@@ -268,18 +310,18 @@ async function sweepIdleSessions() {
   const timeout = config.IDLE_TIMEOUT_MS;
   if (timeout <= 0) return;
 
-  for (const [guildId, entry] of [...activeTranscriptions.entries()]) {
+  for (const [guildId, entry] of activeTranscriptions.entries()) {
     const idleMs = transcriptionService.idleMs(entry.subscription);
     if (idleMs < timeout) continue;
 
-    // Removed first, exactly as the command does: the drain below awaits, and
-    // a `/transcriber stop` arriving meanwhile must not start a second one.
-    activeTranscriptions.delete(guildId);
+    if (entry.closing) continue; // a stop is already draining this one
+    activeTranscriptions.markClosing(guildId, entry.subscription);
     const minutes = Math.round(idleMs / 60000);
     console.log(`Leaving guild ${guildId}: no voice for ${minutes} minutes`);
 
     try {
       const attachment = await closeSession(entry);
+      activeTranscriptions.deleteIf(guildId, entry.subscription);
       const channel = entry.textChannel;
       if (channel && "send" in channel) {
         await channel
@@ -301,8 +343,35 @@ async function sweepIdleSessions() {
 
 /** `/transcriber stop` — drain, upload the transcript, then leave. */
 async function handleStop(interaction: ChatInputCommandInteraction) {
-  const transcription = activeTranscriptions.get(interaction.guildId);
+  // Guaranteed by the `inGuild()` check in the dispatcher; narrowing it there
+  // does not survive the call, so it is restated rather than asserted away.
+  const guildId = interaction.guildId;
+  if (!guildId) return;
+
+
+  const transcription = activeTranscriptions.get(guildId);
   if (!transcription) {
+    // No entry, but the bot may still be sitting in a voice channel: a session
+    // whose entry was lost is otherwise unreachable — no command can stop it,
+    // the idle sweep cannot see it, and only a restart clears it. Leaving the
+    // channel is always the right answer to "stop", so say so and do it.
+    const stray = getVoiceConnection(guildId);
+    if (stray) {
+      logger.warn(`Guild ${guildId} had a voice connection with no session entry`);
+      try {
+        stray.destroy();
+      } catch (error) {
+        logger.debug("Stray voice connection was already destroyed:", error);
+      }
+      await interaction.reply({
+        content:
+          "There was no transcription session on record, but I was still in a " +
+          "voice channel, so I have left it. No transcript could be recovered.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
     await interaction.reply({
       content: "There is no active transcription to stop.",
       flags: MessageFlags.Ephemeral,
@@ -310,9 +379,20 @@ async function handleStop(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // Remove it from the active map first, so a second `/transcriber stop`
-  // cannot start a second drain while this one is still waiting on the vendor.
-  activeTranscriptions.delete(interaction.guildId);
+  if (transcription.closing) {
+    await interaction.reply({
+      content: "This server's transcription is already stopping.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Marked, not removed. A second `/transcriber stop` is refused above, and a
+  // `/transcriber start` arriving during the drain is refused too — the entry
+  // used to be deleted here, which left the guild looking free for the 20 s
+  // the vendor took, and a session started in that gap shared the very voice
+  // connection this stop was about to destroy.
+  activeTranscriptions.markClosing(guildId, transcription.subscription);
 
   // Mandatory, not defensive: the drain below waits up to 20 s for the last
   // transcripts, and an interaction must be acknowledged within 3 s. Replying
@@ -325,6 +405,7 @@ async function handleStop(interaction: ChatInputCommandInteraction) {
       .editReply("*Stopping — waiting for the last transcripts…*")
       .catch(() => {});
   });
+  activeTranscriptions.deleteIf(guildId, transcription.subscription);
 
   if (attachment) {
     await interaction
@@ -344,9 +425,15 @@ async function handleStop(interaction: ChatInputCommandInteraction) {
 
 /** `/transcriber usage` — how much audio this server has transcribed. */
 async function handleUsage(interaction: ChatInputCommandInteraction) {
+  // Guaranteed by the `inGuild()` check in the dispatcher; narrowing it there
+  // does not survive the call, so it is restated rather than asserted away.
+  const guildId = interaction.guildId;
+  if (!guildId) return;
+
+
   const summary = usageStore.summary(
     config.BUDGET_PERIOD,
-    interaction.guildId ?? undefined
+    guildId ?? undefined
   );
   // Ephemeral: a question about this server's own usage is not news for the
   // channel, and the answer is the same however often it is asked.
