@@ -5,6 +5,8 @@ import { budgetMessage, checkBudget, type BudgetLimits } from "./budget.ts";
 import config from "./config.ts";
 import logger from "./logger.ts";
 import { PendingUtterances } from "./pending-utterances.ts";
+import { RecordingArchive } from "./recording-archive.ts";
+import type { ObjectStorage } from "./object-storage.ts";
 import { SessionTranscript } from "./session-transcript.ts";
 import { SpeakerRegistry } from "./speaker-registry.ts";
 import type { UsageStore } from "./usage-store.ts";
@@ -32,6 +34,8 @@ export class TranscriptionService {
   /** Utterances still awaiting a transcript, per session. */
   private pending: Map<string, PendingUtterances> = new Map();
   private transcriptionChannels: Map<string, TextBasedChannel> = new Map();
+  /** Per-session audio archives, present only when storage is configured. */
+  private archives: Map<string, RecordingArchive> = new Map();
   /**
    * When each session last received voice.
    *
@@ -45,7 +49,10 @@ export class TranscriptionService {
   constructor(
     private asr: AsrSetup,
     private usage?: UsageStore,
-    private limits?: BudgetLimits
+    private limits?: BudgetLimits,
+    /** Absent when no bucket is configured, which disables archiving. */
+    private storage?: ObjectStorage,
+    private recordingPrefix = "recordings"
   ) {}
 
   createTranscriptionStream(
@@ -77,6 +84,16 @@ export class TranscriptionService {
     this.transcripts.set(subscriptionId, transcript);
     const pending = new PendingUtterances();
     this.pending.set(subscriptionId, pending);
+
+    const archive = this.storage
+      ? new RecordingArchive(
+          this.storage,
+          this.recordingPrefix,
+          guildId,
+          subscriptionId
+        )
+      : undefined;
+    if (archive) this.archives.set(subscriptionId, archive);
     this.lastActivity.set(subscriptionId, Date.now());
 
     const channelId = "id" in textChannel ? (textChannel.id as string) : null;
@@ -156,7 +173,8 @@ export class TranscriptionService {
                   speakerName: displayName(textChannel, row.speakerId),
                 });
               },
-            }
+            },
+            archive
           );
         });
       } catch (error) {
@@ -218,6 +236,41 @@ export class TranscriptionService {
   }
 
   /**
+   * The session's recordings index: one row per archived utterance, each with
+   * a link that expires.
+   *
+   * Waits for uploads the same bounded way the transcript waits for the
+   * vendor — an index naming objects that never arrived is worse than a short
+   * delay. Signing itself needs no network, so a link is produced even for an
+   * upload that is still in flight; it will simply 404 until that lands.
+   *
+   * Returns null when nothing was archived, including when archiving is off.
+   */
+  async buildRecordingsIndex(
+    subscriptionId: string,
+    ttlSeconds: number
+  ): Promise<AttachmentBuilder | null> {
+    const archive = this.archives.get(subscriptionId);
+    if (!archive || archive.size === 0) return null;
+
+    if (archive.inFlight > 0) {
+      const left = await archive.drain(DRAIN_TIMEOUT_MS);
+      if (left > 0) {
+        logger.warn(
+          `Recordings: ${left} upload(s) did not finish within ` +
+            `${DRAIN_TIMEOUT_MS}ms; their links may not resolve yet`
+        );
+      }
+    }
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    return new AttachmentBuilder(
+      Buffer.from(await archive.toCsv(ttlSeconds), "utf8"),
+      { name: `recordings-${stamp}.csv` }
+    );
+  }
+
+  /**
    * What a session currently has in flight.
    *
    * `speakers` are people whose audio is being segmented right now;
@@ -260,6 +313,7 @@ export class TranscriptionService {
     // Clean up the channel reference
     this.transcriptionChannels.delete(subscriptionId);
     this.lastActivity.delete(subscriptionId);
+    this.archives.delete(subscriptionId);
     this.transcripts.delete(subscriptionId);
     this.pending.delete(subscriptionId);
   }

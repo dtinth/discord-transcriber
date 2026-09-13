@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import { writeWav } from "vxasr/audio";
 import type { AsrSetup } from "./asr-setup.ts";
 import logger from "./logger.ts";
+import type { RecordingSink } from "./recording-archive.ts";
 import { Recording } from "./recording.ts";
 import { ThrottledMessageUpdater } from "./throttled-message-updater.ts";
 import { runTranscriptionJob } from "./transcription-job.ts";
@@ -70,7 +71,8 @@ export class Utterance {
     /** Receives the cost of every attempt, successful or not. */
     private usage?: UsageSink,
     /** Receives this utterance once it is transcribed (or finally failed). */
-    private transcript?: TranscriptSink
+    private transcript?: TranscriptSink,
+    private recordings?: RecordingSink
   ) {
     this.updater = new ThrottledMessageUpdater(userId, textChannel);
     this.transcript?.utteranceStarted();
@@ -103,6 +105,28 @@ export class Utterance {
   }
 
   /**
+   * Sends this utterance's audio to the archive, if one is configured.
+   *
+   * Never throws: an archive that is misconfigured or unreachable must not
+   * cost anybody their transcript, which is the part that cannot be rebuilt.
+   */
+  private archiveRecording(userId: string, messageId: string | null): void {
+    if (!this.recordings || this.recording.size === 0) return;
+    try {
+      this.recordings.archive({
+        speakerId: userId,
+        startedAt: this.startedAt,
+        endedAt: this.endedAt || Date.now(),
+        messageId,
+        wav: writeWav(this.recording.toBuffer()),
+        seconds: this.recording.size / 32000,
+      });
+    } catch (error) {
+      logger.error("Error archiving the utterance recording:", error);
+    }
+  }
+
+  /**
    * Hands this utterance to the session transcript. Never throws, and reports
    * exactly once — a missed finish would leave `!stop` waiting for it.
    */
@@ -110,13 +134,21 @@ export class Utterance {
     if (!this.transcript || this.reported) return;
     this.reported = true;
     try {
+      const messageId = await this.updater.messageId();
+      // Archived here because this is the one place every utterance passes
+      // through, whatever its outcome — so an utterance that failed every
+      // attempt keeps its audio, which is exactly the one worth re-running.
+      // Silent utterances (text === null) are skipped: their message is
+      // deleted and they are absent from the transcript, so an object for
+      // them would index nothing.
+      if (text !== null) this.archiveRecording(userId, messageId);
       this.transcript.utteranceFinished(
         text === null
           ? null
           : {
               startedAt: this.startedAt,
               endedAt: this.endedAt || Date.now(),
-              messageId: await this.updater.messageId(),
+              messageId,
               speakerId: userId,
               text,
             }

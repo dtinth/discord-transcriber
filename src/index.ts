@@ -21,7 +21,8 @@ import {
   transcriberCommand,
   USAGE_SUBCOMMAND,
 } from "./commands.ts";
-import config from "./config.ts";
+import config, { recordingStorageConfig } from "./config.ts";
+import { ObjectStorage } from "./object-storage.ts";
 import { GuildSessions } from "./guild-sessions.ts";
 import { startStatsServer, type BotStats } from "./http-server.ts";
 import logger from "./logger.ts";
@@ -82,10 +83,24 @@ if (config.BUDGET_USD > 0) {
   console.log("Budget: no limit set (BUDGET_USD is 0)");
 }
 
+// Supplying the bucket and keys is what turns archiving on; with none, the
+// service gets no storage and records nothing.
+const recordingConfig = recordingStorageConfig(config);
+if (recordingConfig) {
+  console.log(
+    `Recording utterance audio to ${recordingConfig.bucket} ` +
+      `(links expire after ${Math.round(config.RECORDING_URL_TTL_SECONDS / 3600)}h)`
+  );
+} else {
+  console.log("Recording archive disabled (no RECORDING_BUCKET / keys)");
+}
+
 const transcriptionService = new TranscriptionService(
   asrSetup,
   usageStore,
-  budgetLimits
+  budgetLimits,
+  recordingConfig ? new ObjectStorage(recordingConfig) : undefined,
+  config.RECORDING_PREFIX
 );
 
 // Live transcription sessions, one per guild. Every removal is checked
@@ -286,6 +301,18 @@ async function closeSession(
     console.error("Error building the session transcript:", error);
   }
 
+  // Built after the transcript, and separately: a failure to index the audio
+  // must not cost the transcript, which is the file that cannot be rebuilt.
+  let recordings = null;
+  try {
+    recordings = await transcriptionService.buildRecordingsIndex(
+      entry.subscription,
+      config.RECORDING_URL_TTL_SECONDS
+    );
+  } catch (error) {
+    console.error("Error building the recordings index:", error);
+  }
+
   transcriptionService.stopTranscription(entry.subscription);
   disconnectListeners.get(entry.subscription)?.();
   disconnectListeners.delete(entry.subscription);
@@ -296,7 +323,7 @@ async function closeSession(
     // way, and throwing here would strand the transcript we just built.
     logger.debug("Voice connection was already destroyed:", error);
   }
-  return attachment;
+  return { attachment, recordings };
 }
 
 /**
@@ -320,8 +347,9 @@ async function sweepIdleSessions() {
     console.log(`Leaving guild ${guildId}: no voice for ${minutes} minutes`);
 
     try {
-      const attachment = await closeSession(entry);
+      const { attachment, recordings } = await closeSession(entry);
       activeTranscriptions.deleteIf(guildId, entry.subscription);
+      const files = [attachment, recordings].filter((file) => file !== null);
       const channel = entry.textChannel;
       if (channel && "send" in channel) {
         await channel
@@ -329,7 +357,7 @@ async function sweepIdleSessions() {
             content:
               `Transcription stopped: nobody has spoken for ${minutes} minutes.` +
               (attachment ? "" : " Nothing was transcribed."),
-            ...(attachment ? { files: [attachment] } : {}),
+            ...(files.length > 0 ? { files } : {}),
           })
           .catch((error: unknown) =>
             console.error("Error announcing the idle stop:", error)
@@ -400,16 +428,25 @@ async function handleStop(interaction: ChatInputCommandInteraction) {
   // Deferring buys 15 minutes, which the 20 s drain fits inside comfortably.
   await interaction.deferReply();
 
-  const attachment = await closeSession(transcription, () => {
+  const { attachment, recordings } = await closeSession(transcription, () => {
     void interaction
       .editReply("*Stopping — waiting for the last transcripts…*")
       .catch(() => {});
   });
   activeTranscriptions.deleteIf(guildId, transcription.subscription);
 
-  if (attachment) {
+  const files = [attachment, recordings].filter((file) => file !== null);
+  if (files.length > 0) {
+    const hours = Math.round(config.RECORDING_URL_TTL_SECONDS / 3600);
     await interaction
-      .editReply({ content: "Voice transcription stopped.", files: [attachment] })
+      .editReply({
+        content:
+          "Voice transcription stopped." +
+          (recordings
+            ? `\nThe recordings index lists each utterance's audio. **Those links expire in ${hours} hours** — download them now if you want to keep the audio.`
+            : ""),
+        files,
+      })
       .catch(async (error) => {
         console.error("Error uploading the transcript:", error);
         await interaction

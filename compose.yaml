@@ -28,6 +28,17 @@ services:
       # transcript on the way out. 0 keeps sessions open indefinitely.
       IDLE_TIMEOUT_MS: ${IDLE_TIMEOUT_MS:-1800000}
 
+      # Recording archive. Unset by default, which disables it; setting the
+      # bucket and keys turns it on. Pruning is the bucket's lifecycle rule,
+      # not the bot's — the key starts with the date for exactly that.
+      RECORDING_BUCKET: ${RECORDING_BUCKET:-}
+      RECORDING_ENDPOINT: ${RECORDING_ENDPOINT:-}
+      RECORDING_REGION: ${RECORDING_REGION:-auto}
+      RECORDING_ACCESS_KEY_ID: ${RECORDING_ACCESS_KEY_ID:-}
+      RECORDING_SECRET_ACCESS_KEY: ${RECORDING_SECRET_ACCESS_KEY:-}
+      RECORDING_PREFIX: ${RECORDING_PREFIX:-recordings}
+      RECORDING_URL_TTL_SECONDS: ${RECORDING_URL_TTL_SECONDS:-86400}
+
       ASR_CONFIGURATIONS: ${ASR_CONFIGURATIONS:-}
       ASR_SESSION_REUSE: ${ASR_SESSION_REUSE:-1}
       LOG_LEVEL: ${LOG_LEVEL:-4}

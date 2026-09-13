@@ -6,6 +6,7 @@ import config from "./config.ts";
 import { Downsampler } from "./downsample.ts";
 import { OpusStreamDecoder } from "./opus-stream.ts";
 import logger from "./logger.ts";
+import type { RecordingSink } from "./recording-archive.ts";
 import { Utterance, type TranscriptSink, type UsageSink } from "./utterance.ts";
 
 /** Bytes per Silero VAD frame: 1024 samples of 16 kHz 16-bit mono (64 ms). */
@@ -145,8 +146,17 @@ export class UserAudioStream {
     private onEnd: () => void,
     private usage?: UsageSink,
     private transcript?: TranscriptSink,
+    private recordings: RecordingSink | undefined = undefined,
     private createSegment: SegmentFactory = (userId) =>
-      new Utterance(userId, textChannel, asr, clientId, usage, transcript),
+      new Utterance(
+        userId,
+        textChannel,
+        asr,
+        clientId,
+        usage,
+        transcript,
+        recordings
+      ),
     segmentation: SegmentationOptions = {}
   ) {
     this.maxUtteranceMs = segmentation.maxUtteranceMs ?? config.MAX_UTTERANCE_MS;

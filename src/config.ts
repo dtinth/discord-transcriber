@@ -10,7 +10,7 @@ function floatEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-export default {
+const config = {
   // Discord bot token
   DISCORD_TOKEN: process.env.DISCORD_TOKEN || "",
 
@@ -49,6 +49,36 @@ export default {
     | "day"
     | "month"
     | "total",
+
+  /**
+   * Object storage for per-utterance audio. **Supplying the keys is the
+   * switch**: with no bucket and no credentials nothing is recorded, and the
+   * bot behaves exactly as before.
+   *
+   * The reason to keep the audio is a second pass. Each utterance is
+   * transcribed on its own, so wording drifts between them; the archive lets
+   * the whole meeting be replayed into a multimodal model afterwards, which
+   * sees every utterance in one context and can be consistent across them.
+   *
+   * The audio does not go on the VPS. It is roughly 115 MB per hour of
+   * speech, which is a bucket's problem and not a boot disk's.
+   */
+  RECORDING_BUCKET: process.env.RECORDING_BUCKET || "",
+  RECORDING_ENDPOINT: process.env.RECORDING_ENDPOINT || "",
+  RECORDING_REGION: process.env.RECORDING_REGION || "auto",
+  RECORDING_ACCESS_KEY_ID: process.env.RECORDING_ACCESS_KEY_ID || "",
+  RECORDING_SECRET_ACCESS_KEY: process.env.RECORDING_SECRET_ACCESS_KEY || "",
+  /** Key prefix, so one bucket can hold more than this bot's recordings. */
+  RECORDING_PREFIX: process.env.RECORDING_PREFIX || "recordings",
+  /**
+   * How long the links in the index stay valid, in seconds. Default 24 hours.
+   *
+   * The index is posted to a Discord channel, so the links outlive the message
+   * only as long as this. Anyone who wants to keep the audio must download it
+   * inside the window; after that the objects are still in the bucket, but the
+   * links in that CSV no longer open them.
+   */
+  RECORDING_URL_TTL_SECONDS: intEnv("RECORDING_URL_TTL_SECONDS", 86_400),
 
   /**
    * How long a session may receive no voice at all before the bot leaves,
@@ -161,3 +191,20 @@ export default {
    */
   RECEIVER_SILENCE_MS: intEnv("RECEIVER_SILENCE_MS", 2500),
 };
+
+export default config;
+
+/** Archiving is configured when a bucket and both credentials are present. */
+export function recordingStorageConfig(c: typeof config = config) {
+  if (!c.RECORDING_BUCKET || !c.RECORDING_ACCESS_KEY_ID || !c.RECORDING_SECRET_ACCESS_KEY) {
+    return null;
+  }
+  if (!c.RECORDING_ENDPOINT) return null;
+  return {
+    bucket: c.RECORDING_BUCKET,
+    endpoint: c.RECORDING_ENDPOINT,
+    region: c.RECORDING_REGION,
+    accessKeyId: c.RECORDING_ACCESS_KEY_ID,
+    secretAccessKey: c.RECORDING_SECRET_ACCESS_KEY,
+  };
+}

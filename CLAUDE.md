@@ -113,6 +113,18 @@ Required environment variables in `.env` file:
 - The invite needs the `applications.commands` scope, or registration fails and the command never appears
 - There is no backward compatibility with the `!` prefix. It was removed deliberately: keeping it would keep the privileged intent, so we would pay the cost of prefixes and get none of the benefit
 
+## Recording archive (optional)
+
+- Each utterance's audio is uploaded as a WAV to S3-compatible object storage. **Supplying `RECORDING_BUCKET` and the keys is the switch** — with none set, `recordingStorageConfig()` returns null, the service gets no `ObjectStorage`, and nothing is recorded
+- The reason is a second pass: every utterance is transcribed alone, so wording drifts between them. The archive lets the whole meeting be replayed into a multimodal model afterwards, which sees every utterance in one context
+- `/transcriber stop` then uploads **two** CSVs: the transcript, and a recordings index (`started_at, ended_at, message_id, speaker_id, seconds, bytes, audio_url`). `message_id` is the join key between them
+- Links are presigned and expire after `RECORDING_URL_TTL_SECONDS` (24 h). **Presigning is arithmetic over the key and expiry — no request, and the object need not exist yet**, which is why the index can be built for an upload still in flight
+- `aws4fetch`, not the AWS SDK: a few kilobytes, signs with the platform's own crypto and fetch, no Node shims. Addressing is **path-style**, since virtual-host style breaks every S3-compatible provider that is not AWS
+- Uploads are counted like utterances at the vendor and drained the same bounded way at stop. A failed upload is logged and **keeps its row** — a link that 404s says an utterance existed, where a missing row would hide it — and must never fail the transcript, which is the file that cannot be rebuilt
+- Silent utterances are not archived: their message is deleted and they are absent from the transcript, so an object for them would index nothing. A failed transcription *is* archived — it is the one most worth re-running
+- **No pruning here.** The key begins with the date (`recordings/YYYY-MM-DD/guild/session/NNNNN-messageId.wav`) so the bucket's own lifecycle rule can expire whole days
+- Roughly 115 MB per hour of *speech* (32 kB/s at 16 kHz mono 16-bit) — not per hour of meeting, since silence is never recorded
+
 ## Stats HTTP server
 
 - `src/http-server.ts` serves `GET /healthz` and `GET /stats` on `HTTP_PORT` (default 3000), bound to `HTTP_HOST` (default `127.0.0.1`)

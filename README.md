@@ -134,6 +134,38 @@ It is measured on **speech**, not on who is in the channel — a radio bot or an
 AFK member would otherwise keep a dead session open indefinitely. Set
 `IDLE_TIMEOUT_MS=0` to disable it.
 
+## Recording archive (optional)
+
+Set `RECORDING_BUCKET` and its keys to keep each utterance's audio as a WAV in
+S3-compatible object storage (R2, S3, MinIO, B2). With them unset, nothing is
+recorded and the bot behaves as before.
+
+```
+RECORDING_BUCKET=meeting-audio
+RECORDING_ENDPOINT=https://<account>.r2.cloudflarestorage.com
+RECORDING_ACCESS_KEY_ID=...
+RECORDING_SECRET_ACCESS_KEY=...
+```
+
+`/transcriber stop` then uploads a second CSV beside the transcript:
+
+```
+started_at,ended_at,message_id,speaker_id,seconds,bytes,audio_url
+```
+
+`message_id` joins it to the transcript. **The links expire after 24 hours**
+(`RECORDING_URL_TTL_SECONDS`) — download the audio inside that window to keep
+it. The objects themselves stay in the bucket; only the links expire.
+
+Budget roughly **115 MB per hour of speech** — not per hour of meeting, since
+silence is never recorded. Prune with the bucket's own lifecycle rule; keys
+begin with the date (`recordings/YYYY-MM-DD/...`) so a rule can expire whole
+days.
+
+The point is a second pass: each utterance is transcribed on its own, so
+wording drifts between them. Keeping the audio lets the whole meeting be
+handed to a multimodal model afterwards, which sees every utterance at once.
+
 ## Recovering a lost transcript
 
 If a session ends without producing its CSV, the transcripts are still in the
