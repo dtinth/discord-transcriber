@@ -123,6 +123,7 @@ Required environment variables in `.env` file:
 - Uploads are counted like utterances at the vendor and drained the same bounded way at stop. A failed upload is logged and **keeps its row** — a link that 404s says an utterance existed, where a missing row would hide it — and must never fail the transcript, which is the file that cannot be rebuilt
 - Silent utterances are not archived: their message is deleted and they are absent from the transcript, so an object for them would index nothing. A failed transcription *is* archived — it is the one most worth re-running
 - **No pruning here.** The key begins with the date (`recordings/YYYY-MM-DD/guild/session/NNNNN-messageId.wav`) so the bucket's own lifecycle rule can expire whole days
+- `deno task recording:check` is the pre-flight: PUT, presign, signed GET, an unsigned GET to detect a public bucket, then DELETE. Without it the first test of the credentials is a meeting whose audio silently never uploaded
 - Roughly 115 MB per hour of *speech* (32 kB/s at 16 kHz mono 16-bit) — not per hour of meeting, since silence is never recorded
 
 ## Stats HTTP server

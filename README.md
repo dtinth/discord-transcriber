@@ -166,6 +166,15 @@ The point is a second pass: each utterance is transcribed on its own, so
 wording drifts between them. Keeping the audio lets the whole meeting be
 handed to a multimodal model afterwards, which sees every utterance at once.
 
+Check the credentials before a meeting depends on them:
+
+```
+deno task recording:check
+```
+
+It writes one small object, reads it back through a signed link, warns if the
+bucket is public (which would make the expiry meaningless), and deletes it.
+
 ## Recovering a lost transcript
 
 If a session ends without producing its CSV, the transcripts are still in the

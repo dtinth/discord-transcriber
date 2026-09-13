@@ -79,6 +79,17 @@ export class ObjectStorage {
     }
   }
 
+  /** Remove an object. Used by the pre-flight check to clean up after itself. */
+  async delete(key: string): Promise<void> {
+    const response = await this.client.fetch(this.urlFor(key), { method: "DELETE" });
+    // 204 is success; 404 means it was never there, which is also fine.
+    if (!response.ok && response.status !== 404) {
+      throw new Error(
+        `DELETE ${key} -> ${response.status} ${(await response.text()).slice(0, 200)}`
+      );
+    }
+  }
+
   /**
    * A link that reads the object back, valid for `ttlSeconds`.
    *
